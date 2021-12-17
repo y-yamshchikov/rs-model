@@ -123,6 +123,7 @@ int main(int argc, char* argv[])
 					//}
 					//printf("RangeSectionSize=%d", RangeSectionSize);
 					//printf("\n\n");
+					EM->DumpReaderArray();
 					fflush(stdout);
 					return -1;
 				}

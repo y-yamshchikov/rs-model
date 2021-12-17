@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <vector>
 #include <cstring>
+#include <cstdio>
 
 #define _ASSERTE(...)
 #define NOINLINE
@@ -609,3 +610,41 @@ PRINTF("DeleteRange begin\n");
 PRINTF("DeleteRange end\n");
 }
 
+
+void ExecutionManager::DumpReaderArray()
+{
+	printf("DumpReaderArray: beginning\n");
+	RangeSectionHandleHeader *h = (RangeSectionHandleHeader*)m_RangeSectionHandleReaderHeader;
+	if (h == nullptr)
+	{
+		printf("DumpReaderArray: no reader array\n");
+		return;
+	}
+
+	printf("DumpReaderArray: Reader's header:\n");
+	printf("DumpReaderArray: header's address = %08x:%08x\n", ((TADDR)h)>>32, h);
+	printf("DumpReaderArray: size = %d\n", h->size);
+	printf("DumpReaderArray: capacity = %d\n", h->capacity);
+	printf("DumpReaderArray: count = %d\n", h->count);
+	printf("DumpReaderArray: last_used_index = %d\n", h->last_used_index);
+	printf("DumpReaderArray: elements:\n");
+
+	for (int i = 0; i < h->size; ++i)
+	{
+		printf("DumpReaderArray: ======= %d =======:\n", i);
+		TADDR low = h->array[i].LowAddress;
+		TADDR high;
+		RangeSection* pRS = h->array[i].pRS;
+
+		printf("DumpReaderArray: LowAddress = %08x:%08x\n", ((TADDR)low)>>32, low);
+		printf("DumpReaderArray: pRS = %08x:%08x\n", ((TADDR)pRS)>>32, pRS);
+		if (pRS != nullptr)
+		{
+			high = pRS->HighAddress;
+			printf("DumpReaderArray: HighAddress = %08x:%08x\n", ((TADDR)high)>>32, high);
+		}
+	}
+}
+//void ExecutionManager::DumpWriterArray()
+//{
+//}

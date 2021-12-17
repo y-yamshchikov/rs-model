@@ -117,6 +117,7 @@ class ExecutionManager
 public:
     static void Init();
     static void Reinit();
+    static void DumpReaderArray(void); //NOT THREADSAFE
 
     class ReaderLockHolder
     {
