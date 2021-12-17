@@ -17,7 +17,12 @@ int main(int argc, char* argv[])
 	const int elems = 1000;	
 
 	time_t t;
-	srand((unsigned int) time(&t));
+	unsigned int seed = (unsigned int) time(&t);
+	if (argc > 1)
+	{
+		seed = atoi(argv[1]);
+	}
+	srand(seed);
 
 
 	ExecutionManager *EM = new ExecutionManager();
