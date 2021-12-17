@@ -1,9 +1,25 @@
 #define PRINTF(...)
+#include "codeman.h"
+#include <sched.h>
+#include <atomic>
+#include <pthread.h>
+#include <unistd.h>
+#include <vector>
+#include <cstring>
+
+#define _ASSERTE(...)
+#define NOINLINE
+
+template<typename To, typename From>
+To dac_cast(From arg)
+{
+	return reinterpret_cast<To>(arg);
+}
 
 //Volatile<RangeSectionHandle *> ExecutionManager::m_RangeSectionHandleArray = nullptr;
 volatile RangeSectionHandleHeader*  ExecutionManager::m_RangeSectionHandleReaderHeader = nullptr;
 volatile RangeSectionHandleHeader*  ExecutionManager::m_RangeSectionHandleWriterHeader = nullptr;
-Volatile<RangeSection *>  ExecutionManager::m_RangeSectionPendingDeletion = nullptr;
+volatile RangeSection*  ExecutionManager::m_RangeSectionPendingDeletion = nullptr;
 //Volatile<int> ExecutionManager::m_LastUsedRSIndex = -1;
 //Volatile<SIZE_T> ExecutionManager::m_RangeSectionArraySize = 0;
 //Volatile<SIZE_T> ExecutionManager::m_RangeSectionArrayCapacity = 0;
@@ -23,16 +39,14 @@ CrstStatic ExecutionManager::m_RangeCrst;
 // writer lock and check for any readers. If there are any, the WriterLockHolder functions
 // release the writer and yield to wait for the readers to be done.
 
-ExecutionManager::ReaderLockHolder::ReaderLockHolder(HostCallPreference hostCallPreference /*=AllowHostCalls*/)
+template<typename T>
+T InterlockedCompareExchangeT(T* ptr, T newval, T oldval)
 {
-    CONTRACTL {
-        NOTHROW;
-        //if (hostCallPreference == AllowHostCalls) { HOST_CALLS; } else { HOST_NOCALLS; }
-        HOST_NOCALLS;
-        GC_NOTRIGGER;
-        CAN_TAKE_LOCK;
-    } CONTRACTL_END;
+	return __sync_val_compare_and_swap(ptr, oldval, newval);
+}
 
+ExecutionManager::ReaderLockHolder::ReaderLockHolder()
+{
     //IncCantAllocCount();
 
     //FastInterlockIncrement(&m_dwReaderCount);
@@ -50,21 +64,12 @@ PRINTF("ReaderLockHolder constructor, after fetch count, h=%08x, count=%d\n", h,
     if (count != InterlockedCompareExchangeT(&(h->count), count+1, count))
         goto INCREMENT;
 }
-
 //---------------------------------------------------------------------------------------
 //
 // See code:ExecutionManager::ReaderLockHolder::ReaderLockHolder. This just decrements the reader count.
 
 ExecutionManager::ReaderLockHolder::~ReaderLockHolder()
 {
-    CONTRACTL
-    {
-        NOTHROW;
-        GC_NOTRIGGER;
-        MODE_ANY;
-    }
-    CONTRACTL_END;
-
 //    FastInterlockDecrement(&m_dwReaderCount);
     int count;
 DECREMENT:
@@ -97,51 +102,71 @@ PRINTF("~ReaderLockHolder rewrite wh: old wh=%08x, new wh=%08x\n", m_RangeSectio
     //EE_LOCK_RELEASED(GetPtrForLockContract());
 }
 
-//---------------------------------------------------------------------------------------
-//
-// Returns whether the reader lock is acquired
-
-BOOL ExecutionManager::ReaderLockHolder::Acquired()
+BOOL SwitchToThread(VOID)
 {
-    LIMITED_METHOD_CONTRACT;
-    return true;
+	BOOL ret;
+	
+	/* sched_yield yields to another thread in the current process. This implementation
+	 *        won't work well for cross-process synchronization. */
+	ret = (sched_yield() == 0);
+	return ret;
 }
 
+BOOL __SwitchToThread (DWORD dwSleepMSec, DWORD dwSwitchCount)
+{
+	if (dwSleepMSec > 0)
+	{
+		usleep(dwSleepMSec);
+		return TRUE;
+	}
+	    
+#ifdef TARGET_ARM
+#define SLEEP_START_THRESHOLD (5 * 1024)
+#else
+#define SLEEP_START_THRESHOLD (32 * 1024)
+#endif
+	if (dwSwitchCount >= SLEEP_START_THRESHOLD)
+	{
+		usleep(1000); //one millisecond sleep
+	}
+	return SwitchToThread();
+}
+//---------------------------------------------------------------------------------------
+//
+
+//We should not hold reader lock and then hold writer locks
+//in same thread before releasing reader lock:
+//it results in a deadlock when writer lock will wait for
+//old copy holding by the reader
+//which will never be returned on writer's spot
 ExecutionManager::WriterLockHolder::WriterLockHolder()
 {
-    CONTRACTL {
-        NOTHROW;
-        GC_NOTRIGGER;
-        CAN_TAKE_LOCK;
-    } CONTRACTL_END;
-
     // Signal to a debugger that this thread cannot stop now
-    IncCantStopCount();
+    //IncCantStopCount();
 
-    IncCantAllocCount();
+    //IncCantAllocCount();
 
     DWORD dwSwitchCount = 0;
 
 
     SIZE_T count;
 FETCH:
-    Thread::IncForbidSuspendThread();
+    //Thread::IncForbidSuspendThread();
     h = (RangeSectionHandleHeader*)m_RangeSectionHandleWriterHeader;
-
-    count = h->count;
-    if (count != 0)
+    //CHANGE
+    if (h == nullptr)
+    //END CHANGE
     {
-        Thread::DecForbidSuspendThread();
+        //Thread::DecForbidSuspendThread();
         __SwitchToThread(0, ++dwSwitchCount);
         goto FETCH;
     }
-    EE_LOCK_TAKEN(GetPtrForLockContract());
+
+    //EE_LOCK_TAKEN(GetPtrForLockContract());
 }
 
 ExecutionManager::WriterLockHolder::~WriterLockHolder()
 {
-    LIMITED_METHOD_CONTRACT;
-
     int count;
     RangeSectionHandleHeader *old_rh = (RangeSectionHandleHeader*)m_RangeSectionHandleReaderHeader;
     h->count = 1; //EM's unit
@@ -173,14 +198,14 @@ DECREMENT:
 
     // Writer lock released, so it's safe again for this thread to be
     // suspended or have its stack walked by a profiler
-    Thread::DecForbidSuspendThread();
+    //Thread::DecForbidSuspendThread();
 
-    DecCantAllocCount();
+    //DecCantAllocCount();
 
     // Signal to a debugger that it's again safe to stop this thread
-    DecCantStopCount();
+    //DecCantStopCount();
 
-    EE_LOCK_RELEASED(GetPtrForLockContract());
+    //EE_LOCK_RELEASED(GetPtrForLockContract());
 }
 
 
@@ -188,35 +213,51 @@ DECREMENT:
 //  EEJitManager
 //**********************************************************************************
 
-EEJitManager::EEJitManager()
-{
-    CONTRACTL {
-        THROWS;
-        GC_NOTRIGGER;
-    } CONTRACTL_END;
-}
-
 
 // Init statics
 void ExecutionManager::Init()
 {
-    CONTRACTL {
-        THROWS;
-        GC_NOTRIGGER;
-    } CONTRACTL_END;
+    //m_RangeCrst.Init(CrstExecuteManRangeLock, CRST_UNSAFE_ANYMODE);
+}
 
-    m_RangeCrst.Init(CrstExecuteManRangeLock, CRST_UNSAFE_ANYMODE);
+void ExecutionManager::Reinit()//NOT THREADSAFE !!!
+{
+    //m_RangeCrst.Init(CrstExecuteManRangeLock, CRST_UNSAFE_ANYMODE);
+
+	if (m_RangeSectionHandleReaderHeader == nullptr)
+		return; //inited just now, no need to reinit
+
+	std::vector<TADDR> lows;
+
+	{//rlh's
+		ReaderLockHolder rlh;
+		RangeSectionHandleHeader *h = rlh.h;
+		for (int i = 0; i < h->size; ++i) 
+		{
+			TADDR pCode = h->array[0].LowAddress;
+			lows.push_back(pCode);
+		}
+		//rlh exists until scope's end
+	}
+
+	for(auto pCode: lows)
+	{
+		DeleteRange(pCode);
+		//wlhs terminate on each return
+		//and swaps arryas
+	}
+	//traverses delete list then terminates
+	if (m_RangeSectionHandleReaderHeader)
+	        delete[] (char*)m_RangeSectionHandleReaderHeader;
+	if (m_RangeSectionHandleWriterHeader)
+	        delete[] (char*)m_RangeSectionHandleWriterHeader;
+	ExecutionManager::m_RangeSectionHandleReaderHeader = nullptr;
+	ExecutionManager::m_RangeSectionHandleWriterHeader = nullptr;
+	ExecutionManager::m_RangeSectionPendingDeletion = nullptr;
 }
 
 RangeSection* ExecutionManager::GetRangeSection(TADDR addr)
 {
-    CONTRACTL {
-        NOTHROW;
-        HOST_NOCALLS;
-        GC_NOTRIGGER;
-        SUPPORTS_DAC;
-    } CONTRACTL_END;
-
 PRINTF("GetRangeSection begin, addr=%08x\n", addr);
     if (m_RangeSectionHandleReaderHeader == nullptr)
     {
@@ -268,8 +309,8 @@ PRINTF("GetRangeSection end 4\n");
         LastUsedRSIndex = (int)(rh->size) - 1;
     }
 
-    if (g_SystemInfo.dwNumberOfProcessors < 4 || !GCHeapUtilities::IsServerHeap() || !GCHeapUtilities::IsGCInProgress())
-	    rh->last_used_index = LastUsedRSIndex;
+//    if (g_SystemInfo.dwNumberOfProcessors < 4 || !GCHeapUtilities::IsServerHeap() || !GCHeapUtilities::IsGCInProgress())
+    rh->last_used_index = LastUsedRSIndex;
 
 PRINTF("GetRangeSection end 5\n");
     return (foundIndex>=0)?rh->array[foundIndex].pRS:NULL;
@@ -293,13 +334,6 @@ PRINTF("GetRangeSection end 5\n");
 //
 int ExecutionManager::FindRangeSectionHandleHelper(RangeSectionHandleHeader *h, TADDR addr)
 {
-    CONTRACTL {
-        NOTHROW;
-        HOST_NOCALLS;
-        GC_NOTRIGGER;
-        SUPPORTS_DAC;
-    } CONTRACTL_END;
-
 PRINTF("FindRangeSectionHandleHelper begin\n");
     RangeSectionHandle *array = h->array;
 
@@ -367,13 +401,6 @@ void ExecutionManager::AddCodeRange(TADDR          pStartRange,
                                     RangeSection::RangeSectionFlags flags,
                                     void *         pHp)
 {
-    CONTRACTL {
-        THROWS;
-        GC_NOTRIGGER;
-        PRECONDITION(CheckPointer(pJit));
-        PRECONDITION(CheckPointer(pHp));
-    } CONTRACTL_END;
-
     AddRangeHelper(pStartRange,
                    pEndRange,
                    pJit,
@@ -383,11 +410,8 @@ void ExecutionManager::AddCodeRange(TADDR          pStartRange,
 
 void ExecutionManager::AddRangeSection(RangeSection *pRS)
 {
-    CONTRACTL {
-        GC_NOTRIGGER;
-    } CONTRACTL_END;
 PRINTF("AddRangeSection begin, LowAddress=%08x, HighAddress=%08x\n", pRS->LowAddress, pRS->HighAddress);
-    CrstHolder ch(&m_RangeCrst); // Acquire the Crst before linking in a new RangeList
+    CrstHolder ch(&m_RangeCrst);
 PRINTF("AddRangeSection crst acquired\n");
     if (m_RangeSectionHandleReaderHeader == nullptr)
     {
@@ -399,6 +423,7 @@ PRINTF("AddRangeSection crst acquired\n");
         m_RangeSectionHandleWriterHeader->array[0].LowAddress = pRS->LowAddress;
         m_RangeSectionHandleWriterHeader->array[0].pRS = pRS; 
         m_RangeSectionHandleWriterHeader->count = 0;
+	//TODO what about GC lastused usage condition?
 	m_RangeSectionHandleWriterHeader->last_used_index = 0;
 
         RangeSectionHandleHeader *rh = (RangeSectionHandleHeader *)(new char[volume]);
@@ -438,6 +463,7 @@ PRINTF("AddRangeSection wh allocated\n");
         wlh.h = wh;
         wh->size = size;
         wh->capacity = capacity;
+	//TODO what about GC lastused usage condition?
         wh->last_used_index = rh->last_used_index;
         wh->count = 0;
         //memcpy((void*)(wh->array), (const void*)(rh->array), size*sizeof(RangeSectionHandle));
@@ -483,6 +509,7 @@ PRINTF("AddRangeSection after two memcpys (instead of memmove) (index<0)\n");
         wh->array[index].LowAddress = pRS->LowAddress;
         wh->array[index].pRS = pRS;
         wh->size = size + 1;
+	//TODO what about GC lastused usage condition?
         if (rh->last_used_index >= index)
             wh->last_used_index = rh->last_used_index + 1;//aware of readers just running rh
 PRINTF("AddRangeSection end 3\n");
@@ -494,10 +521,6 @@ PRINTF("AddRangeSection end 4\n");
 
 void ExecutionManager::DeleteRangeSection(RangeSectionHandleHeader **pwh, RangeSectionHandleHeader *rh, int index)
 {
-    CONTRACTL {
-        NOTHROW;
-        GC_NOTRIGGER;
-    } CONTRACTL_END;
 PRINTF("DeleteRangeSection begin\n");
 
     if (index < 0)
@@ -527,6 +550,7 @@ PRINTF("DeleteRangeSection end 1\n");
     else if (LastUsedRSIndex == index)
         LastUsedRSIndex = wh->size - 1;
     
+    //TODO what about GC lastused usage condition?
     wh->last_used_index = LastUsedRSIndex;
 PRINTF("DeleteRangeSection end 2\n");
 }
@@ -537,13 +561,6 @@ void ExecutionManager::AddRangeHelper(TADDR          pStartRange,
                                       RangeSection::RangeSectionFlags flags,
                                       TADDR          pHeapListOrZapModule)
 {
-    CONTRACTL {
-        THROWS;
-        GC_NOTRIGGER;
-        HOST_CALLS;
-        PRECONDITION(pStartRange < pEndRange);
-        PRECONDITION(pHeapListOrZapModule != NULL);
-    } CONTRACTL_END;
 PRINTF("AddRangeHelper begin\n");
 
     RangeSection *pnewrange = new RangeSection;
@@ -565,10 +582,6 @@ PRINTF("AddRangeHelper end\n");
 // Deletes a single range starting at pStartRange
 void ExecutionManager::DeleteRange(TADDR pStartRange)
 {
-    CONTRACTL {
-        NOTHROW; // If this becomes throwing, then revisit the queuing of deletes below.
-        GC_NOTRIGGER;
-    } CONTRACTL_END;
 PRINTF("DeleteRange begin\n");
 
     {

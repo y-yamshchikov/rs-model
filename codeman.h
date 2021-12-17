@@ -1,10 +1,23 @@
-#include "crst.h"
+#include "common.h"
+#include <pthread.h>
+class CrstStatic
+{
+};
 
+class CrstHolder
+{
+public:
+	CrstHolder(CrstStatic* st)
+	{
+		//stub
+	}
+};
 
 //-----------------------------------------------------------------------------
 // The ExecutionManager uses RangeSection as the abstraction of a contiguous
 // address range to track the code heaps.
 
+#define DPTR(type) type*
 typedef DPTR(struct RangeSection) PTR_RangeSection;
 typedef DPTR(struct RangeSectionHandle) PTR_RangeSectionHandle;
 typedef DPTR(struct RangeSectionHandleHeader) PTR_RangeSectionHandleHeader;
@@ -30,6 +43,8 @@ struct RangeSectionHandleHeader
     RangeSectionHandle array[1];
 };
 
+typedef void* PTR_IJitManager;
+typedef void* PTR_UnwindInfoTable;
 struct RangeSection
 {
     TADDR               LowAddress;
@@ -101,17 +116,14 @@ class ExecutionManager
 
 public:
     static void Init();
-
-    static RangeSection * FindCodeRange(PCODE currentPC, ScanFlag scanFlag);
+    static void Reinit();
 
     class ReaderLockHolder
     {
     public:
-        ReaderLockHolder(HostCallPreference hostCallPreference = AllowHostCalls);
+        ReaderLockHolder();
         ~ReaderLockHolder();
 	RangeSectionHandleHeader *h;
-
-        BOOL Acquired();
     };
 
 
@@ -120,10 +132,6 @@ public:
                                        RangeSection::RangeSectionFlags flags,
                                        void * pHp);
 
-    static void           AddNativeImageRange(TADDR StartRange,
-                                              SIZE_T Size,
-                                              Module * pModule);
-
     static void            AddRangeSection(RangeSection *pRS);
 
     static void           DeleteRangeSection(RangeSectionHandleHeader **pwh, RangeSectionHandleHeader *rh, int index);
@@ -131,8 +139,8 @@ public:
     static void           DeleteRange(TADDR StartRange);
 
 
-private:
     static RangeSection* GetRangeSection(TADDR addr);
+private:
 
     static CrstStatic       m_RangeCrst;        // Aquire before writing into m_CodeRangeList and m_DataRangeList
 
@@ -143,7 +151,7 @@ private:
     //static Volatile<LONG>   m_dwReaderCount;
     static volatile RangeSectionHandleHeader * m_RangeSectionHandleReaderHeader;
     static volatile RangeSectionHandleHeader * m_RangeSectionHandleWriterHeader;
-    static Volatile<RangeSection*>  ExecutionManager::m_RangeSectionPendingDeletion;
+    static volatile RangeSection*  m_RangeSectionPendingDeletion;
     //static Volatile<LONG>   m_dwWriterLock;
 
     class WriterLockHolder
