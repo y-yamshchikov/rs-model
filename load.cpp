@@ -1,15 +1,22 @@
 
+#include <unistd.h>
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
 #include "load.h"
 //#include <time.h>
 #include <vector>
-#define PRINTF printf
-//#define PRINTF(...) 
+//#define PRINTF printf
+#define PRINTF(...) 
 #include "codeman.h"
 
 using namespace std;
+
+void debug_trap(void)
+{
+	while(true)
+		sleep(1);
+}
 
 int main(int argc, char* argv[])
 {
@@ -30,6 +37,7 @@ int main(int argc, char* argv[])
 
 	for (int i = 0; i < epochs; ++i)
 	{
+		//EM->DumpReaderArray();
 		EM->Reinit(); //pretend we have new EM instance
 
 		printf("i=%d\n", i);
@@ -48,6 +56,7 @@ int main(int argc, char* argv[])
 			{
 				f = false;
 				rnd = (rand()<<1) + rand()%2;
+				rnd = rnd<<16;
 				for (auto x : nums)
 				{
 					if( rnd == x)
@@ -84,11 +93,13 @@ int main(int argc, char* argv[])
 
 			if ((rand()%10 == 0))
 			{
-				EM->DeleteRange(LowAddress);
-//TODO make advanced Delete-load
+				//EM->DumpReaderArray();
 
 				PRINTF("deleting range, j == %d, low = %08x\n", j, LowAddress);
 				fflush(stdout);
+				EM->DeleteRange(LowAddress);
+				//EM->DumpReaderArray();
+//TODO make advanced Delete-load
 				deleted_ranges.push_back(j);
 			}
 
@@ -123,13 +134,22 @@ int main(int argc, char* argv[])
 					//}
 					//printf("RangeSectionSize=%d", RangeSectionSize);
 					//printf("\n\n");
-					EM->DumpReaderArray();
+					//EM->DumpReaderArray();
 					fflush(stdout);
 					return -1;
 				}
 				if(ranges[k].LowAddress != pRS->LowAddress)
 				{
-					printf("section broken\n");
+					TADDR rs_low = pRS->LowAddress;  
+					TADDR rs_high = pRS->HighAddress;  
+					TADDR m_low = ranges[k].LowAddress;
+					TADDR m_high = ranges[k].HighAddress;
+					printf("section broken: i = %d, j = %d, k = %d, elem = %08x, search for %08x\n", i, j, k, m_low, pCode, rs_low);
+					printf("section broken: pRS->LowAddress=%08x:%08x, ranges[%d].LowAddress=%08x:%08x\n",((TADDR)rs_low)>>32, rs_low , k, ((TADDR)m_low)>>32, m_low);
+					printf("section broken: pRS->HighAddress=%08x:%08x, ranges[%d].HighAddress=%08x:%08x\n",((TADDR)rs_high)>>32, rs_high, k, ((TADDR)m_high)>>32, m_high);
+					fflush(stdout);
+					debug_trap();
+					return -1;
 				}
 				
 				//if(ranges[k].HighAddress != pRS2->HighAddress)

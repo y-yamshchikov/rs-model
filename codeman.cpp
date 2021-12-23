@@ -10,6 +10,10 @@
 
 #define _ASSERTE(...)
 #define NOINLINE
+void debug_trap2(void)
+{
+	sleep(1);
+}
 
 template<typename To, typename From>
 To dac_cast(From arg)
@@ -235,12 +239,11 @@ void ExecutionManager::Reinit()//NOT THREADSAFE !!!
 		RangeSectionHandleHeader *h = rlh.h;
 		for (int i = 0; i < h->size; ++i) 
 		{
-			TADDR pCode = h->array[0].LowAddress;
+			TADDR pCode = h->array[i].LowAddress;
 			lows.push_back(pCode);
 		}
 		//rlh exists until scope's end
 	}
-
 	for(auto pCode: lows)
 	{
 		DeleteRange(pCode);
@@ -402,6 +405,8 @@ void ExecutionManager::AddCodeRange(TADDR          pStartRange,
                                     RangeSection::RangeSectionFlags flags,
                                     void *         pHp)
 {
+	if (pStartRange == (TADDR)0x96fa15d2)
+		debug_trap2();
     AddRangeHelper(pStartRange,
                    pEndRange,
                    pJit,
@@ -443,42 +448,51 @@ PRINTF("AddRangeSection wlh acquired\n");
     RangeSectionHandleHeader *wh = wlh.h; 
 PRINTF("AddRangeSection rh and wh cached: rh=%08x, wh=%08x\n", rh, wh);
 PRINTF("AddRangeSection rh and wh cached: rh->size=%d, rh->capacity=%d, wh->capacity=%d\n", rh->size, rh->capacity, wh->capacity);
-
-    if ((rh->size == rh->capacity) //outnumbered
-        || (wh->capacity < rh->capacity)) //outdated
+//CHANGE
+    if (wh->capacity < (rh->size+1)) //can't add to writer's array, expand
     {
 PRINTF("AddRangeSection outnumbered or outdated\n");
         //reallocate array
         delete[] (char*)wh;
 PRINTF("AddRangeSection wh deleted\n");
+	SIZE_T capacity;
+	if ((rh->size+1) > rh->capacity)
+	{
 #ifdef _DEBUG
-        SIZE_T capacity = rh->capacity + RangeSectionHandleArrayIncrement;
+        	capacity = rh->capacity + RangeSectionHandleArrayIncrement;
 #else
-        SIZE_T capacity = rh->capacity * RangeSectionHandleArrayExpansionFactor;
+        	capacity = rh->capacity * RangeSectionHandleArrayExpansionFactor;
 #endif //_DEBUG
-        SIZE_T size = rh->size;
+	}
+	else
+	{
+		capacity = rh->capacity;
+	}
+
         SIZE_T volume = sizeof(RangeSectionHandleHeader)
             + sizeof(RangeSectionHandle)*(capacity - 1);
+
         wh = (RangeSectionHandleHeader*)(new char[volume]);
+
+	printf("volume=%ld\n", volume);
+	fflush(stdout);
 PRINTF("AddRangeSection wh allocated\n");
         wlh.h = wh;
-        wh->size = size;
+        wh->size = rh->size;
         wh->capacity = capacity;
 	//TODO what about GC lastused usage condition?
         wh->last_used_index = rh->last_used_index;
         wh->count = 0;
-        //memcpy((void*)(wh->array), (const void*)(rh->array), size*sizeof(RangeSectionHandle));
 PRINTF("AddRangeSection wh restored\n");
     }
     else
     {
         wh->size = rh->size;
-        wh->capacity = rh->capacity;
         wh->last_used_index = -1;
         wh->count = 0;
-        //memcpy((void*)(wh->array), (const void*)(rh->array), wh->size*sizeof(RangeSectionHandle));
 PRINTF("AddRangeSection wh refreshed\n");
     }
+//END CHANGE
 
 PRINTF("AddRangeSection deciding where to add\n");
     //where to add?
@@ -541,7 +555,10 @@ PRINTF("DeleteRangeSection end 1\n");
         wh = (RangeSectionHandleHeader*)(new char[volume]);
 	*pwh = wh;
     }
-    memcpy((void*)(wh->array), (const void*)(rh->array), index*sizeof(RangeSectionHandle));
+    //CHANGE
+    //copying header + elements until deleted
+    memcpy((void*)wh, (const void*)rh, sizeof(RangeSectionHandleHeader) + (index-1)*sizeof(RangeSectionHandle));
+    //END CHANGE
     memcpy((void*)(wh->array+index), (const void*)(rh->array+index+1), (rh->size-index-1)*sizeof(RangeSectionHandle));
     wh->size--;
 
@@ -604,6 +621,7 @@ PRINTF("DeleteRange begin\n");
 	{
             rh->array[index].pRS->pNextPendingDeletion = (RangeSection*)m_RangeSectionPendingDeletion;
             m_RangeSectionPendingDeletion = rh->array[index].pRS;
+		//printf("DeleteRange: pending deletion low = %08x:%08x; pRS = %08x:%08x\n", ((TADDR)(pStartRange))>>32, pStartRange, ((TADDR)rh->array[index].pRS)>>32, rh->array[index].pRS);
             DeleteRangeSection(&wlh.h, rh, index);
 	}
     }
@@ -631,7 +649,7 @@ void ExecutionManager::DumpReaderArray()
 
 	for (int i = 0; i < h->size; ++i)
 	{
-		printf("DumpReaderArray: ======= %d =======:\n", i);
+		printf("DumpReaderArray: ======= %d =======\n", i);
 		TADDR low = h->array[i].LowAddress;
 		TADDR high;
 		RangeSection* pRS = h->array[i].pRS;
@@ -644,7 +662,40 @@ void ExecutionManager::DumpReaderArray()
 			printf("DumpReaderArray: HighAddress = %08x:%08x\n", ((TADDR)high)>>32, high);
 		}
 	}
+	fflush(stdout);
 }
-//void ExecutionManager::DumpWriterArray()
-//{
-//}
+void ExecutionManager::DumpWriterArray()
+{
+	printf("DumpWriter: beginning\n");
+	RangeSectionHandleHeader *h = (RangeSectionHandleHeader*)m_RangeSectionHandleWriterHeader;
+	if (h == nullptr)
+	{
+		printf("DumpWriterArray: no writer array\n");
+		return;
+	}
+
+	printf("DumpWriterArray: Writer's header:\n");
+	printf("DumpWriterArray: header's address = %08x:%08x\n", ((TADDR)h)>>32, h);
+	printf("DumpWriterArray: size = %d\n", h->size);
+	printf("DumpWriterArray: capacity = %d\n", h->capacity);
+	printf("DumpWriterArray: count = %d\n", h->count);
+	printf("DumpWriterArray: last_used_index = %d\n", h->last_used_index);
+	printf("DumpWriterArray: elements:\n");
+
+	for (int i = 0; i < h->size; ++i)
+	{
+		printf("DumpWriterArray: ======= %d =======\n", i);
+		TADDR low = h->array[i].LowAddress;
+		TADDR high;
+		RangeSection* pRS = h->array[i].pRS;
+
+		printf("DumpWriterArray: LowAddress = %08x:%08x\n", ((TADDR)low)>>32, low);
+		printf("DumpWriterArray: pRS = %08x:%08x\n", ((TADDR)pRS)>>32, pRS);
+		if (pRS != nullptr)
+		{
+			high = pRS->HighAddress;
+			printf("DumpWriterArray: HighAddress = %08x:%08x\n", ((TADDR)high)>>32, high);
+		}
+	}
+	fflush(stdout);
+}
