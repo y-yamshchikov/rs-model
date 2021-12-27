@@ -18,18 +18,45 @@ void debug_trap(void)
 		sleep(1);
 }
 
+LoadSettings::LoadSettings()
+{
+	seed_is_set = false;
+	SetReadLoadDensity(5);
+	//OrderRandom();
+	//OrderAscending();
+	OrderDescending();
+	SetDeleteDensity(10);//just default value, no special meaning
+}
+
+unsigned int LoadSettings::GetSeed()
+{
+	if (seed_is_set)
+	{
+		return seed;
+	}
+	else
+	{
+		time_t t;
+		seed = (unsigned int) time(&t);
+		seed_is_set = true;
+		return seed;
+	}
+}
+
 int main(int argc, char* argv[])
 {
 	const int epochs = 1000;	
 	const int elems = 1000;	
 
-	time_t t;
-	unsigned int seed = (unsigned int) time(&t);
+	LoadSettings load_settings;
+	load_settings.OrderRandom();
+
+
 	if (argc > 1)
 	{
-		seed = atoi(argv[1]);
+		load_settings.SetSeed(atoi(argv[1]));
 	}
-	srand(seed);
+	srand(load_settings.GetSeed());
 
 
 	ExecutionManager *EM = new ExecutionManager();
@@ -66,16 +93,31 @@ int main(int argc, char* argv[])
 			nums.push_back(rnd);
 		}
 
-		sort(nums.begin(), nums.end());
+		if (load_settings.IsDescending())
+		{
+			sort(nums.begin(), nums.end(), std::greater<int>());
+		}
+		else
+		{
+			sort(nums.begin(), nums.end()); //Ascending sorting, uses for Ascending and Random load
+		}
 
 		for (int n = 0; n < elems; n++)
 		{
 			Range elem;
 			elem.LowAddress = (TADDR)nums[n*2];
 			elem.HighAddress = (TADDR)nums[n*2+1];
-			int index = rand()%(ranges.size() + 1);			
-			vector<Range>::iterator it = (ranges.begin() + index);
-			ranges.insert(it, elem);
+			
+			if (load_settings.IsRandom()) //random load is building on Ascending sorting
+			{
+				int index = rand()%(ranges.size() + 1);			
+				vector<Range>::iterator it = (ranges.begin() + index);
+				ranges.insert(it, elem);
+			}
+			else
+			{
+				ranges.push_back(elem);
+			}
 		}
 
 		for (int j = 0; j < elems; ++j)
@@ -91,7 +133,7 @@ int main(int argc, char* argv[])
                                     RangeSection::RANGE_SECTION_CODEHEAP,
                                     nullptr);//pHp
 
-			if ((rand()%10 == 0))
+			if ((rand()%load_settings.GetDeleteDivisor() == 0))
 			{
 				//EM->DumpReaderArray();
 
@@ -119,43 +161,44 @@ int main(int argc, char* argv[])
 				}
 				if (skip)
 					continue;
-				int random_delta = rand()%((unsigned long long)ranges[k].HighAddress - (unsigned long long)ranges[k].LowAddress - 1);
-				//int noise = rand()%100 - 50;
-				int noise = 0;
-				TADDR pCode = (TADDR)((unsigned long long)ranges[k].LowAddress + random_delta + noise);
 
-				RangeSection *pRS = EM->GetRangeSection(pCode);
-				if (!pRS) 
+
+				for (int i = 0; i < load_settings.GetReadLoadDensity(); i++)
 				{
-					printf("element not found, i = %d, j = %d, k = %d, elem = %08x, search for %08x\n", i, j, k, ranges[k].LowAddress, pCode);
-					//for (int n = 0; n < RangeSectionSize; ++n)
-					//{
-					//	printf("%08x:%08x ", pRangeSectionHandleArray[n].LowAddress, pRangeSectionHandleArray[n].pRS->HighAddress);
-					//}
-					//printf("RangeSectionSize=%d", RangeSectionSize);
-					//printf("\n\n");
-					//EM->DumpReaderArray();
-					fflush(stdout);
-					return -1;
+//TODO false positive tests
+					int random_delta = rand()%((unsigned long long)ranges[k].HighAddress - (unsigned long long)ranges[k].LowAddress - 1);
+					//int noise = rand()%100 - 50;
+					int noise = 0;
+					TADDR pCode = (TADDR)((unsigned long long)ranges[k].LowAddress + random_delta + noise);
+
+					RangeSection *pRS = EM->GetRangeSection(pCode);
+					if (!pRS) 
+					{
+						printf("element not found, i = %d, j = %d, k = %d, elem = %08x, search for %08x\n", i, j, k, ranges[k].LowAddress, pCode);
+						//for (int n = 0; n < RangeSectionSize; ++n)
+						//{
+						//	printf("%08x:%08x ", pRangeSectionHandleArray[n].LowAddress, pRangeSectionHandleArray[n].pRS->HighAddress);
+						//}
+						//printf("RangeSectionSize=%d", RangeSectionSize);
+						//printf("\n\n");
+						//EM->DumpReaderArray();
+						fflush(stdout);
+						return -1;
+					}
+					if(ranges[k].LowAddress != pRS->LowAddress)
+					{
+						TADDR rs_low = pRS->LowAddress;  
+						TADDR rs_high = pRS->HighAddress;  
+						TADDR m_low = ranges[k].LowAddress;
+						TADDR m_high = ranges[k].HighAddress;
+						printf("section broken: i = %d, j = %d, k = %d, elem = %08x, search for %08x\n", i, j, k, m_low, pCode, rs_low);
+						printf("section broken: pRS->LowAddress=%08x:%08x, ranges[%d].LowAddress=%08x:%08x\n",((TADDR)rs_low)>>32, rs_low , k, ((TADDR)m_low)>>32, m_low);
+						printf("section broken: pRS->HighAddress=%08x:%08x, ranges[%d].HighAddress=%08x:%08x\n",((TADDR)rs_high)>>32, rs_high, k, ((TADDR)m_high)>>32, m_high);
+						fflush(stdout);
+						debug_trap();
+						return -1;
+					}
 				}
-				if(ranges[k].LowAddress != pRS->LowAddress)
-				{
-					TADDR rs_low = pRS->LowAddress;  
-					TADDR rs_high = pRS->HighAddress;  
-					TADDR m_low = ranges[k].LowAddress;
-					TADDR m_high = ranges[k].HighAddress;
-					printf("section broken: i = %d, j = %d, k = %d, elem = %08x, search for %08x\n", i, j, k, m_low, pCode, rs_low);
-					printf("section broken: pRS->LowAddress=%08x:%08x, ranges[%d].LowAddress=%08x:%08x\n",((TADDR)rs_low)>>32, rs_low , k, ((TADDR)m_low)>>32, m_low);
-					printf("section broken: pRS->HighAddress=%08x:%08x, ranges[%d].HighAddress=%08x:%08x\n",((TADDR)rs_high)>>32, rs_high, k, ((TADDR)m_high)>>32, m_high);
-					fflush(stdout);
-					debug_trap();
-					return -1;
-				}
-				
-				//if(ranges[k].HighAddress != pRS2->HighAddress)
-				//{
-				//	printf("section broken\n");
-				//}
 			}
 
 		}
