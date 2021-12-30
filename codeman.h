@@ -1,16 +1,24 @@
 #include "common.h"
 #include <pthread.h>
-class CrstStatic
-{
-};
+#include <mutex>
+
+typedef std::mutex CrstStatic;
 
 class CrstHolder
 {
 public:
 	CrstHolder(CrstStatic* st)
 	{
-		//stub
+		m_pMutex = st;
+		m_pMutex->lock();
 	}
+
+	~CrstHolder()
+	{
+		m_pMutex->unlock();
+	}
+private:
+	std::mutex *m_pMutex;
 };
 
 //-----------------------------------------------------------------------------

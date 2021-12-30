@@ -24,7 +24,7 @@ public:
 		delete_divisor = 101 - delete_divisor;
 	}
 
-	int GetDeleteDivisor(){return delete_divisor;};
+	int GetDeleteDivisor() const {return delete_divisor;}
 
 	void OrderAscending()
 	{
@@ -54,11 +54,13 @@ public:
 			read_load_density = 1;
 	}
 
-	int GetReadLoadDensity() {return read_load_density;};
+	int GetReadLoadDensity() const {return read_load_density;}
 
-	bool IsRandom() {return random;}
-	bool IsAscending() {return ascending;}
-	bool IsDescending() {return descending;}
+	bool IsRandom() const {return random;}
+	bool IsAscending() const {return ascending;}
+	bool IsDescending() const {return descending;}
+
+private:
 	bool descending;
 	bool ascending;
 	bool random;
@@ -70,3 +72,5 @@ public:
 	int delete_divisor;
 };
 
+int load_singlethreaded(bool set_seed, unsigned int seed);
+int load_multithreaded(bool set_seed, unsigned int seed);

@@ -3,6 +3,7 @@
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
+#include <thread>
 #include "load.h"
 //#include <time.h>
 #include <vector>
@@ -43,8 +44,25 @@ unsigned int LoadSettings::GetSeed()
 	}
 }
 
+void adder(ExecutionManager *EM, const LoadSettings &load_settings, const std::vector<Range> &ranges);
+
 int main(int argc, char* argv[])
 {
+	if (argc > 1)
+	{
+		load_multithreaded(true, atoi(argv[1]));
+	}
+	else
+	{
+		load_multithreaded(false, 0);
+	}
+
+	return 0;
+}
+
+int load_singlethreaded(bool set_seed, unsigned int seed)
+{
+
 	const int epochs = 1000;	
 	const int elems = 1000;	
 
@@ -52,9 +70,9 @@ int main(int argc, char* argv[])
 	load_settings.OrderRandom();
 
 
-	if (argc > 1)
+	if (set_seed)
 	{
-		load_settings.SetSeed(atoi(argv[1]));
+		load_settings.SetSeed(seed);
 	}
 	srand(load_settings.GetSeed());
 
@@ -163,7 +181,7 @@ int main(int argc, char* argv[])
 					continue;
 
 
-				for (int i = 0; i < load_settings.GetReadLoadDensity(); i++)
+				for (int m = 0; m < load_settings.GetReadLoadDensity(); m++)
 				{
 //TODO false positive tests
 					int random_delta = rand()%((unsigned long long)ranges[k].HighAddress - (unsigned long long)ranges[k].LowAddress - 1);
@@ -208,4 +226,174 @@ int main(int argc, char* argv[])
 	//PRINTF("RAND_MAX = %08x\n" ,RAND_MAX);
 	printf("test succeeded\n");
 	return 0;
+
+}
+
+
+int load_multithreaded(bool set_seed, unsigned int seed)
+{
+	const int epochs = 1000;	
+	const int elems = 1000;	
+
+	LoadSettings load_settings;
+	load_settings.OrderRandom();
+
+
+	if (set_seed)
+	{
+		load_settings.SetSeed(seed);
+	}
+	srand(load_settings.GetSeed());
+
+
+	ExecutionManager *EM = new ExecutionManager();
+	EM->Init();
+
+	for (int i = 0; i < epochs; ++i)
+	{
+		//EM->DumpReaderArray();
+		EM->Reinit(); //pretend we have new EM instance
+
+		printf("i=%d\n", i);
+		fflush(stdout);
+		vector<unsigned int>  nums;
+		vector<Range> ranges;
+		vector<int> deleted_ranges;
+
+		EM->Reinit();
+
+		for (int n = 0; n < elems*2; n++)
+		{
+			unsigned int rnd;
+			bool f = false;
+			do
+			{
+				f = false;
+				rnd = (rand()<<1) + rand()%2;
+				rnd = rnd<<16;
+				for (auto x : nums)
+				{
+					if( rnd == x)
+						f = true;
+				} 
+			}while ( f );
+			nums.push_back(rnd);
+		}
+
+		if (load_settings.IsDescending())
+		{
+			sort(nums.begin(), nums.end(), std::greater<int>());
+		}
+		else
+		{
+			sort(nums.begin(), nums.end()); //Ascending sorting, uses for Ascending and Random load
+		}
+
+		vector<Range> ranges_part[4];	
+
+		for (int n = 0; n < elems; n++)
+		{
+			Range elem;
+			elem.LowAddress = (TADDR)nums[n*2];
+			elem.HighAddress = (TADDR)nums[n*2+1];
+			
+			if (load_settings.IsRandom()) //random load is building on Ascending sorting
+			{
+				int index = rand()%(ranges.size() + 1);			
+				vector<Range>::iterator it = (ranges.begin() + index);
+				ranges.insert(it, elem);
+
+				int part = rand()%4;
+				int part_index = rand()%(ranges_part[part].size() + 1);			
+				vector<Range>::iterator it_part = (ranges_part[part].begin() + part_index);
+				ranges_part[part].insert(it_part, elem);
+			}
+			else
+			{
+				ranges.push_back(elem);
+				ranges_part[n%4].push_back(elem);
+			}
+		}
+//general array created
+//partial arrays created
+
+//void adder(ExecutionManager *EM, const LoadSettings &load_settings, const std::vector<Range> &ranges)
+		std::thread adder_1(adder,EM, load_settings, ranges_part[0]);
+		std::thread adder_2(adder,EM, load_settings, ranges_part[1]);
+		std::thread adder_3(adder,EM, load_settings, ranges_part[2]);
+		std::thread adder_4(adder,EM, load_settings, ranges_part[3]);
+
+		adder_1.join();
+		adder_2.join();
+		adder_3.join();
+		adder_4.join();
+
+		for (int k = 0; k < elems; ++k)
+		{
+
+			for (int m = 0; m < load_settings.GetReadLoadDensity(); m++)
+			{
+//TODO false positive tests
+				int random_delta = rand()%((unsigned long long)ranges[k].HighAddress - (unsigned long long)ranges[k].LowAddress - 1);
+				//int noise = rand()%100 - 50;
+				int noise = 0;
+				TADDR pCode = (TADDR)((unsigned long long)ranges[k].LowAddress + random_delta + noise);
+
+				RangeSection *pRS = EM->GetRangeSection(pCode);
+				if (!pRS) 
+				{
+					printf("element not found, i = %d, elems = %d, k = %d, elem = %08x, search for %08x\n", i, elems, k, ranges[k].LowAddress, pCode);
+					//for (int n = 0; n < RangeSectionSize; ++n)
+					//{
+					//	printf("%08x:%08x ", pRangeSectionHandleArray[n].LowAddress, pRangeSectionHandleArray[n].pRS->HighAddress);
+					//}
+					//printf("RangeSectionSize=%d", RangeSectionSize);
+					//printf("\n\n");
+					//EM->DumpReaderArray();
+					fflush(stdout);
+					return -1;
+				}
+				if(ranges[k].LowAddress != pRS->LowAddress)
+				{
+					TADDR rs_low = pRS->LowAddress;  
+					TADDR rs_high = pRS->HighAddress;  
+					TADDR m_low = ranges[k].LowAddress;
+					TADDR m_high = ranges[k].HighAddress;
+					printf("section broken: i = %d, elems = %d, k = %d, elem = %08x, search for %08x\n", i, elems, k, m_low, pCode, rs_low);
+					printf("section broken: pRS->LowAddress=%08x:%08x, ranges[%d].LowAddress=%08x:%08x\n",((TADDR)rs_low)>>32, rs_low , k, ((TADDR)m_low)>>32, m_low);
+					printf("section broken: pRS->HighAddress=%08x:%08x, ranges[%d].HighAddress=%08x:%08x\n",((TADDR)rs_high)>>32, rs_high, k, ((TADDR)m_high)>>32, m_high);
+					fflush(stdout);
+					debug_trap();
+					return -1;
+				}
+			}
+		}
+
+	}
+	
+	
+
+	//PRINTF("RAND_MAX = %08x\n" ,RAND_MAX);
+	printf("test succeeded\n");
+	return 0;
+}
+
+
+void adder(ExecutionManager *EM, const LoadSettings &load_settings, const std::vector<Range> &ranges)
+{
+	int elems = ranges.size();
+
+	for (int j = 0; j < elems; ++j)
+	{
+		PRINTF("j=%d\n", j);
+		TADDR LowAddress = (TADDR)ranges[j].LowAddress;
+		TADDR HighAddress = (TADDR)ranges[j].HighAddress;
+		PRINTF("adding low=%08x, high=%08x\n", LowAddress, HighAddress);
+
+		EM->AddCodeRange(LowAddress,
+                            HighAddress,
+                            nullptr, //pJit
+                            RangeSection::RANGE_SECTION_CODEHEAP,
+                            nullptr);//pHp
+	}
 }
