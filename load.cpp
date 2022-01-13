@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <algorithm>
 #include <thread>
+#include <sched.h>
 #include "load.h"
 //#include <time.h>
 #include <vector>
@@ -22,7 +23,7 @@ void debug_trap(void)
 LoadSettings::LoadSettings()
 {
 	seed_is_set = false;
-	SetReadLoadDensity(5);
+	SetReadLoadDensity(10000);
 	//OrderRandom();
 	//OrderAscending();
 	OrderDescending();
@@ -45,16 +46,19 @@ unsigned int LoadSettings::GetSeed()
 }
 
 void adder(ExecutionManager *EM, const LoadSettings &load_settings, const std::vector<Range> &ranges);
+void reader(ExecutionManager *EM, const LoadSettings &load_settings, const std::vector<Range> &ranges, int i, int batch_no);
 
 int main(int argc, char* argv[])
 {
 	if (argc > 1)
 	{
 		load_multithreaded(true, atoi(argv[1]));
+		//load_singlethreaded(true, atoi(argv[1]));
 	}
 	else
 	{
 		load_multithreaded(false, 0);
+		//load_singlethreaded(false, 0);
 	}
 
 	return 0;
@@ -318,57 +322,97 @@ int load_multithreaded(bool set_seed, unsigned int seed)
 //partial arrays created
 
 //void adder(ExecutionManager *EM, const LoadSettings &load_settings, const std::vector<Range> &ranges)
+		cpu_set_t cpu_set;
+		CPU_ZERO(&cpu_set);
+		CPU_SET(0, &cpu_set);
 		std::thread adder_1(adder,EM, load_settings, ranges_part[0]);
+		int err = pthread_setaffinity_np(adder_1.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		CPU_ZERO(&cpu_set);
+		CPU_SET(2, &cpu_set);
 		std::thread adder_2(adder,EM, load_settings, ranges_part[1]);
+		err = pthread_setaffinity_np(adder_2.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		CPU_ZERO(&cpu_set);
+		CPU_SET(4, &cpu_set);
 		std::thread adder_3(adder,EM, load_settings, ranges_part[2]);
+		err = pthread_setaffinity_np(adder_3.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		CPU_ZERO(&cpu_set);
+		CPU_SET(6, &cpu_set);
 		std::thread adder_4(adder,EM, load_settings, ranges_part[3]);
+		err = pthread_setaffinity_np(adder_4.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
 
 		adder_1.join();
 		adder_2.join();
 		adder_3.join();
 		adder_4.join();
 
-		for (int k = 0; k < elems; ++k)
+//now read asynchronously:
+		CPU_ZERO(&cpu_set);
+		CPU_SET(0, &cpu_set);
+		std::thread reader_1(reader,EM, load_settings, ranges_part[0], i, 0);
+		err = pthread_setaffinity_np(reader_1.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
 		{
-
-			for (int m = 0; m < load_settings.GetReadLoadDensity(); m++)
-			{
-//TODO false positive tests
-				int random_delta = rand()%((unsigned long long)ranges[k].HighAddress - (unsigned long long)ranges[k].LowAddress - 1);
-				//int noise = rand()%100 - 50;
-				int noise = 0;
-				TADDR pCode = (TADDR)((unsigned long long)ranges[k].LowAddress + random_delta + noise);
-
-				RangeSection *pRS = EM->GetRangeSection(pCode);
-				if (!pRS) 
-				{
-					printf("element not found, i = %d, elems = %d, k = %d, elem = %08x, search for %08x\n", i, elems, k, ranges[k].LowAddress, pCode);
-					//for (int n = 0; n < RangeSectionSize; ++n)
-					//{
-					//	printf("%08x:%08x ", pRangeSectionHandleArray[n].LowAddress, pRangeSectionHandleArray[n].pRS->HighAddress);
-					//}
-					//printf("RangeSectionSize=%d", RangeSectionSize);
-					//printf("\n\n");
-					//EM->DumpReaderArray();
-					fflush(stdout);
-					return -1;
-				}
-				if(ranges[k].LowAddress != pRS->LowAddress)
-				{
-					TADDR rs_low = pRS->LowAddress;  
-					TADDR rs_high = pRS->HighAddress;  
-					TADDR m_low = ranges[k].LowAddress;
-					TADDR m_high = ranges[k].HighAddress;
-					printf("section broken: i = %d, elems = %d, k = %d, elem = %08x, search for %08x\n", i, elems, k, m_low, pCode, rs_low);
-					printf("section broken: pRS->LowAddress=%08x:%08x, ranges[%d].LowAddress=%08x:%08x\n",((TADDR)rs_low)>>32, rs_low , k, ((TADDR)m_low)>>32, m_low);
-					printf("section broken: pRS->HighAddress=%08x:%08x, ranges[%d].HighAddress=%08x:%08x\n",((TADDR)rs_high)>>32, rs_high, k, ((TADDR)m_high)>>32, m_high);
-					fflush(stdout);
-					debug_trap();
-					return -1;
-				}
-			}
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
 		}
 
+		CPU_ZERO(&cpu_set);
+		CPU_SET(2, &cpu_set);
+		std::thread reader_2(reader,EM, load_settings, ranges_part[1], i, 1);
+		err = pthread_setaffinity_np(reader_2.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		CPU_ZERO(&cpu_set);
+		CPU_SET(4, &cpu_set);
+		std::thread reader_3(reader,EM, load_settings, ranges_part[2], i, 2);
+		err = pthread_setaffinity_np(reader_3.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		CPU_ZERO(&cpu_set);
+		CPU_SET(6, &cpu_set);
+		std::thread reader_4(reader,EM, load_settings, ranges_part[3], i, 3);
+		err = pthread_setaffinity_np(reader_4.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		reader_1.join();
+		reader_2.join();
+		reader_3.join();
+		reader_4.join();
 	}
 	
 	
@@ -395,5 +439,51 @@ void adder(ExecutionManager *EM, const LoadSettings &load_settings, const std::v
                             nullptr, //pJit
                             RangeSection::RANGE_SECTION_CODEHEAP,
                             nullptr);//pHp
+	}
+}
+
+void reader(ExecutionManager *EM, const LoadSettings &load_settings, const std::vector<Range> &ranges, int i, int batch_no)
+{
+	int elems = ranges.size();
+
+	for (int k = 0; k < elems; ++k)
+	{
+
+		for (int m = 0; m < load_settings.GetReadLoadDensity(); m++)
+		{
+//TODO false positive tests
+			int random_delta = rand()%((unsigned long long)ranges[k].HighAddress - (unsigned long long)ranges[k].LowAddress - 1);
+			//int noise = rand()%100 - 50;
+			int noise = 0;
+			TADDR pCode = (TADDR)((unsigned long long)ranges[k].LowAddress + random_delta + noise);
+
+			RangeSection *pRS = EM->GetRangeSection(pCode);
+			if (!pRS) 
+			{
+				printf("element not found, i = %d, batch_no = %d, elems = %d, k = %d, elem = %08x, search for %08x\n", i, batch_no,  elems, k, ranges[k].LowAddress, pCode);
+				//for (int n = 0; n < RangeSectionSize; ++n)
+				//{
+				//	printf("%08x:%08x ", pRangeSectionHandleArray[n].LowAddress, pRangeSectionHandleArray[n].pRS->HighAddress);
+				//}
+				//printf("RangeSectionSize=%d", RangeSectionSize);
+				//printf("\n\n");
+				//EM->DumpReaderArray();
+				fflush(stdout);
+				exit(-1);
+			}
+			if(ranges[k].LowAddress != pRS->LowAddress)
+			{
+				TADDR rs_low = pRS->LowAddress;  
+				TADDR rs_high = pRS->HighAddress;  
+				TADDR m_low = ranges[k].LowAddress;
+				TADDR m_high = ranges[k].HighAddress;
+				printf("section broken: i = %d, batch_no, elems = %d, k = %d, elem = %08x, search for %08x\n", i, batch_no, elems, k, m_low, pCode, rs_low);
+				printf("section broken: pRS->LowAddress=%08x:%08x, ranges[%d].LowAddress=%08x:%08x\n",((TADDR)rs_low)>>32, rs_low , k, ((TADDR)m_low)>>32, m_low);
+				printf("section broken: pRS->HighAddress=%08x:%08x, ranges[%d].HighAddress=%08x:%08x\n",((TADDR)rs_high)>>32, rs_high, k, ((TADDR)m_high)>>32, m_high);
+				fflush(stdout);
+				debug_trap();
+				exit(1);
+			}
+		}
 	}
 }
