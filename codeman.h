@@ -46,7 +46,7 @@ struct RangeSectionHandleHeader
 {
     SIZE_T size;
     SIZE_T capacity;
-    int count;
+    volatile int count;
     int last_used_index;
     RangeSectionHandle array[1];
 };
@@ -101,6 +101,7 @@ class ExecutionManager
 
     enum
     {
+#define _DEBUG
 #ifndef _DEBUG
         RangeSectionHandleArrayInitialSize = 100,
         RangeSectionHandleArrayExpansionFactor = 2
@@ -108,6 +109,7 @@ class ExecutionManager
         RangeSectionHandleArrayInitialSize = 8,
 	RangeSectionHandleArrayIncrement = 1
 #endif //(_DEBUG)
+#undef _DEBUG
     };
 
     static int FindRangeSectionHandleHelper(RangeSectionHandleHeader *h, TADDR addr);

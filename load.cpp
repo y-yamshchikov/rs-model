@@ -16,6 +16,8 @@ using namespace std;
 
 void debug_trap(void)
 {
+	printf("DEBUG TRAP\n");
+	fflush(stdout);
 	while(true)
 		sleep(1);
 }
@@ -45,19 +47,21 @@ unsigned int LoadSettings::GetSeed()
 	}
 }
 
-void adder(ExecutionManager *EM, const LoadSettings &load_settings, const std::vector<Range> &ranges);
+void adder(ExecutionManager *EM, const LoadSettings &load_settings, const std::vector<Range> &ranges, int i, int batch_no);
 void reader(ExecutionManager *EM, const LoadSettings &load_settings, const std::vector<Range> &ranges, int i, int batch_no);
 
 int main(int argc, char* argv[])
 {
 	if (argc > 1)
 	{
-		load_multithreaded(true, atoi(argv[1]));
+		load_multithreaded_rw_async(true, atoi(argv[1]));
+		//load_multithreaded(true, atoi(argv[1]));
 		//load_singlethreaded(true, atoi(argv[1]));
 	}
 	else
 	{
-		load_multithreaded(false, 0);
+		load_multithreaded_rw_async(false, 0);
+		//load_multithreaded(false, 0);
 		//load_singlethreaded(false, 0);
 	}
 
@@ -321,11 +325,10 @@ int load_multithreaded(bool set_seed, unsigned int seed)
 //general array created
 //partial arrays created
 
-//void adder(ExecutionManager *EM, const LoadSettings &load_settings, const std::vector<Range> &ranges)
 		cpu_set_t cpu_set;
 		CPU_ZERO(&cpu_set);
 		CPU_SET(0, &cpu_set);
-		std::thread adder_1(adder,EM, load_settings, ranges_part[0]);
+		std::thread adder_1(adder,EM, load_settings, ranges_part[0], i, 0);
 		int err = pthread_setaffinity_np(adder_1.native_handle(), sizeof(cpu_set_t), &cpu_set);
 		if (err != 0)
 		{
@@ -335,7 +338,7 @@ int load_multithreaded(bool set_seed, unsigned int seed)
 
 		CPU_ZERO(&cpu_set);
 		CPU_SET(2, &cpu_set);
-		std::thread adder_2(adder,EM, load_settings, ranges_part[1]);
+		std::thread adder_2(adder,EM, load_settings, ranges_part[1], i, 1);
 		err = pthread_setaffinity_np(adder_2.native_handle(), sizeof(cpu_set_t), &cpu_set);
 		if (err != 0)
 		{
@@ -345,7 +348,7 @@ int load_multithreaded(bool set_seed, unsigned int seed)
 
 		CPU_ZERO(&cpu_set);
 		CPU_SET(4, &cpu_set);
-		std::thread adder_3(adder,EM, load_settings, ranges_part[2]);
+		std::thread adder_3(adder,EM, load_settings, ranges_part[2], i, 2);
 		err = pthread_setaffinity_np(adder_3.native_handle(), sizeof(cpu_set_t), &cpu_set);
 		if (err != 0)
 		{
@@ -355,7 +358,7 @@ int load_multithreaded(bool set_seed, unsigned int seed)
 
 		CPU_ZERO(&cpu_set);
 		CPU_SET(6, &cpu_set);
-		std::thread adder_4(adder,EM, load_settings, ranges_part[3]);
+		std::thread adder_4(adder,EM, load_settings, ranges_part[3], i, 3);
 		err = pthread_setaffinity_np(adder_4.native_handle(), sizeof(cpu_set_t), &cpu_set);
 		if (err != 0)
 		{
@@ -423,8 +426,10 @@ int load_multithreaded(bool set_seed, unsigned int seed)
 }
 
 
-void adder(ExecutionManager *EM, const LoadSettings &load_settings, const std::vector<Range> &ranges)
+void adder(ExecutionManager *EM, const LoadSettings &load_settings, const std::vector<Range> &ranges, int i, int batch_no)
 {
+	printf("adder started: batch_no = %d\n", batch_no);
+	fflush(stdout);
 	int elems = ranges.size();
 
 	for (int j = 0; j < elems; ++j)
@@ -439,7 +444,10 @@ void adder(ExecutionManager *EM, const LoadSettings &load_settings, const std::v
                             nullptr, //pJit
                             RangeSection::RANGE_SECTION_CODEHEAP,
                             nullptr);//pHp
+		//printf("adder with batch_no = %d, j = %d\n", batch_no, j);
 	}
+	printf("adder ended: batch_no = %d\n", batch_no);
+	fflush(stdout);
 }
 
 void reader(ExecutionManager *EM, const LoadSettings &load_settings, const std::vector<Range> &ranges, int i, int batch_no)
@@ -460,6 +468,7 @@ void reader(ExecutionManager *EM, const LoadSettings &load_settings, const std::
 			RangeSection *pRS = EM->GetRangeSection(pCode);
 			if (!pRS) 
 			{
+				debug_trap();
 				printf("element not found, i = %d, batch_no = %d, elems = %d, k = %d, elem = %08x, search for %08x\n", i, batch_no,  elems, k, ranges[k].LowAddress, pCode);
 				//for (int n = 0; n < RangeSectionSize; ++n)
 				//{
@@ -469,6 +478,7 @@ void reader(ExecutionManager *EM, const LoadSettings &load_settings, const std::
 				//printf("\n\n");
 				//EM->DumpReaderArray();
 				fflush(stdout);
+				debug_trap();
 				exit(-1);
 			}
 			if(ranges[k].LowAddress != pRS->LowAddress)
@@ -486,4 +496,201 @@ void reader(ExecutionManager *EM, const LoadSettings &load_settings, const std::
 			}
 		}
 	}
+}
+
+
+
+int load_multithreaded_rw_async(bool set_seed, unsigned int seed)
+{
+	const int epochs = 1000;	
+	const int elems = 1000;	
+
+	LoadSettings load_settings;
+	load_settings.OrderRandom();
+
+
+	if (set_seed)
+	{
+		load_settings.SetSeed(seed);
+	}
+	printf("seed = %d\n", load_settings.GetSeed());
+	srand(load_settings.GetSeed());
+
+
+	ExecutionManager *EM = new ExecutionManager();
+	EM->Init();
+
+	for (int i = 0; i < epochs; ++i)
+	{
+		//EM->DumpReaderArray();
+		EM->Reinit(); //pretend we have new EM instance
+
+		printf("i=%d\n", i);
+		fflush(stdout);
+		vector<unsigned int>  nums;
+		vector<Range> ranges;
+		vector<int> deleted_ranges;
+
+		EM->Reinit();
+
+		for (int n = 0; n < elems*2; n++)
+		{
+			unsigned int rnd;
+			bool f = false;
+			do
+			{
+				f = false;
+				rnd = (rand()<<1) + rand()%2;
+				rnd = rnd<<16;
+				for (auto x : nums)
+				{
+					if( rnd == x)
+						f = true;
+				} 
+			}while ( f );
+			nums.push_back(rnd);
+		}
+
+		if (load_settings.IsDescending())
+		{
+			sort(nums.begin(), nums.end(), std::greater<int>());
+		}
+		else
+		{
+			sort(nums.begin(), nums.end()); //Ascending sorting, uses for Ascending and Random load
+		}
+
+		vector<Range> ranges_part[4];	
+
+		for (int n = 0; n < elems; n++)
+		{
+			Range elem;
+			elem.LowAddress = (TADDR)nums[n*2];
+			elem.HighAddress = (TADDR)nums[n*2+1];
+			
+			if (load_settings.IsRandom()) //random load is building on Ascending sorting
+			{
+				int index = rand()%(ranges.size() + 1);			
+				vector<Range>::iterator it = (ranges.begin() + index);
+				ranges.insert(it, elem);
+
+				int part = rand()%4;
+				int part_index = rand()%(ranges_part[part].size() + 1);			
+				vector<Range>::iterator it_part = (ranges_part[part].begin() + part_index);
+				ranges_part[part].insert(it_part, elem);
+			}
+			else
+			{
+				ranges.push_back(elem);
+				ranges_part[n%4].push_back(elem);
+			}
+		}
+		printf("ranges_part[0].size = %d\n", ranges_part[0].size());
+//general array created
+//partial arrays created
+		fprintf(stderr, "i=%d\n", i);
+
+		cpu_set_t cpu_set;
+		CPU_ZERO(&cpu_set);
+		CPU_SET(0, &cpu_set);
+		std::thread adder_1(adder,EM, load_settings, ranges_part[0], i, 0);
+		int err = pthread_setaffinity_np(adder_1.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		adder_1.join();
+
+		CPU_ZERO(&cpu_set);
+		CPU_SET(0, &cpu_set);
+		std::thread reader_1(reader,EM, load_settings, ranges_part[0], i, 0);
+		err = pthread_setaffinity_np(reader_1.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+//-----------------------
+
+		CPU_ZERO(&cpu_set);
+		CPU_SET(2, &cpu_set);
+		std::thread adder_2(adder,EM, load_settings, ranges_part[1], i, 1);
+		err = pthread_setaffinity_np(adder_2.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		adder_2.join();
+/*
+
+		CPU_ZERO(&cpu_set);
+		CPU_SET(2, &cpu_set);
+		std::thread reader_2(reader,EM, load_settings, ranges_part[1], i, 1);
+		err = pthread_setaffinity_np(reader_2.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+//-----------------------
+
+		CPU_ZERO(&cpu_set);
+		CPU_SET(4, &cpu_set);
+		std::thread adder_3(adder,EM, load_settings, ranges_part[2], i, 2);
+		err = pthread_setaffinity_np(adder_3.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		adder_3.join();
+
+		CPU_ZERO(&cpu_set);
+		CPU_SET(4, &cpu_set);
+		std::thread reader_3(reader,EM, load_settings, ranges_part[2], i, 2);
+		err = pthread_setaffinity_np(reader_3.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+//-----------------------
+
+		CPU_ZERO(&cpu_set);
+		CPU_SET(6, &cpu_set);
+		std::thread adder_4(adder,EM, load_settings, ranges_part[3], i, 3);
+		err = pthread_setaffinity_np(adder_4.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		adder_4.join();
+
+		CPU_ZERO(&cpu_set);
+		CPU_SET(6, &cpu_set);
+		std::thread reader_4(reader,EM, load_settings, ranges_part[3], i, 3);
+		err = pthread_setaffinity_np(reader_4.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+*/
+		reader_1.join();
+//		reader_2.join();
+//		reader_3.join();
+//		reader_4.join();
+	}
+
+	//PRINTF("RAND_MAX = %08x\n" ,RAND_MAX);
+	printf("test succeeded\n");
+	return 0;
 }

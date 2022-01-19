@@ -61,13 +61,17 @@ ExecutionManager::ReaderLockHolder::ReaderLockHolder()
     int count;
 BEGIN:
     h = (RangeSectionHandleHeader*)m_RangeSectionHandleReaderHeader;
+    //printf("try rlh.h = %08x:%08x\n", (SIZE_T)h>>32, (SIZE_T)h&0x00000000ffffffff);
+    //fflush(stdout);
 INCREMENT:
     count = h->count;
 PRINTF("ReaderLockHolder constructor, after fetch count, h=%08x, count=%d\n", h, count);
     if (count == 0)
         goto BEGIN;
-    if (count != InterlockedCompareExchangeT(&(h->count), count+1, count))
+    if (count != InterlockedCompareExchangeT((int*)(&(h->count)), count+1, count))
         goto INCREMENT;
+    //printf("rlh.h = %08x:%08x\n", (SIZE_T)h>>32, (SIZE_T)h&0x00000000ffffffff);
+    //fflush(stdout);
 }
 //---------------------------------------------------------------------------------------
 //
@@ -75,15 +79,21 @@ PRINTF("ReaderLockHolder constructor, after fetch count, h=%08x, count=%d\n", h,
 
 ExecutionManager::ReaderLockHolder::~ReaderLockHolder()
 {
+	static int cumulative = 0;
 //    FastInterlockDecrement(&m_dwReaderCount);
     int count;
 DECREMENT:
     count = h->count;
-    if (count != InterlockedCompareExchangeT(&(h->count), count-1, count))
+    if (count != InterlockedCompareExchangeT((int*)&(h->count), count-1, count))
+    {
+	    //printf("~rlh: rare situation, count = %d, h=%08x:%08x, cumulative=%d\n",count, (SIZE_T)h>>32, (SIZE_T)h&0x00000000ffffffff, ++cumulative);
+	    //fflush(stdout);
         goto DECREMENT;
+    }
     if (count == 1)// h->count == 0
     {
-PRINTF("~ReaderLockHolder rewrite wh: old wh=%08x, new wh=%08x\n", m_RangeSectionHandleWriterHeader, h);
+//printf("~ReaderLockHolder rewrite wh: old wh=%08x, new wh=%08x, cumulative=%d\n", m_RangeSectionHandleWriterHeader, h, ++cumulative);
+//fflush(stdout);
         //we are here in relatively rare case
         //such code executes once per swap of arrays,
         //so we should not worry about enormous amount
@@ -99,8 +109,12 @@ PRINTF("~ReaderLockHolder rewrite wh: old wh=%08x, new wh=%08x\n", m_RangeSectio
             m_RangeSectionPendingDeletion = pNext;
         }
 
+    //printf("releasing rlh.h = %08x:%08x\n", (SIZE_T)h>>32, (SIZE_T)h&0x00000000ffffffff);
+    //fflush(stdout);
         m_RangeSectionHandleWriterHeader = h;
     }
+    //printf("releasing rlh.h = %08x:%08x, cumulative=%d\n", (SIZE_T)h>>32, (SIZE_T)h&0x00000000ffffffff, cumulative++);
+    //fflush(stdout);
 
     //DecCantAllocCount();
 
@@ -159,7 +173,7 @@ FETCH:
     //Thread::IncForbidSuspendThread();
     h = (RangeSectionHandleHeader*)m_RangeSectionHandleWriterHeader;
     //CHANGE
-    if (h == nullptr)
+    if ((h == nullptr)||(h->count != 0))
     //END CHANGE
     {
         //Thread::DecForbidSuspendThread();
@@ -167,6 +181,8 @@ FETCH:
         goto FETCH;
     }
 
+    //printf("seizing wlh.h = %08x:%08x\n", (SIZE_T)h>>32, (SIZE_T)h&0x00000000ffffffff);
+    //fflush(stdout);
     //EE_LOCK_TAKEN(GetPtrForLockContract());
 }
 
@@ -176,13 +192,16 @@ ExecutionManager::WriterLockHolder::~WriterLockHolder()
     RangeSectionHandleHeader *old_rh = (RangeSectionHandleHeader*)m_RangeSectionHandleReaderHeader;
     h->count = 1; //EM's unit
     m_RangeSectionHandleReaderHeader = h;
+    //printf("releasing wlh.h = %08x:%08x\n", (SIZE_T)h>>32, (SIZE_T)h&0x00000000ffffffff);
+    //fflush(stdout);
 
     //removing EM's unit from old reader's header, so now latest leaving
     //user will attach the header to writer's slot
+    __sync_synchronize();
 DECREMENT:
     count = old_rh->count;
     
-    if (count != InterlockedCompareExchangeT(&(old_rh->count), count-1, count))
+    if (count != InterlockedCompareExchangeT((int*)&(old_rh->count), count-1, count))
         goto DECREMENT;
     if (count == 1)// h->count == 0, all readers left, we've just removed EM's unit,
                    //now attach the header to writer's slot:
@@ -262,10 +281,16 @@ void ExecutionManager::Reinit()//NOT THREADSAFE !!!
 
 RangeSection* ExecutionManager::GetRangeSection(TADDR addr)
 {
+#undef PRINTF
+//#define PRINTF printf
+#define PRINTF(...)
 PRINTF("GetRangeSection begin, addr=%08x\n", addr);
     if (m_RangeSectionHandleReaderHeader == nullptr)
     {
 PRINTF("GetRangeSetion end 1\n");
+#define FFLUSH fflush
+FFLUSH(stdout);
+#undef FFLUSH
         return NULL;
     }
 
@@ -273,6 +298,7 @@ PRINTF("GetRangeSection before rlh\n");
     ReaderLockHolder rlh;
 PRINTF("GetRangeSection rlh acquired\n");
     RangeSectionHandleHeader *rh = rlh.h;
+    //printf("%d ", rh->count);
     int LastUsedRSIndex = rh->last_used_index;
     if (LastUsedRSIndex != -1)
     {
@@ -284,6 +310,10 @@ PRINTF("GetRangeSection rlh acquired\n");
         if ((addr >= LowAddress) && (addr < HighAddress))
 	{
 PRINTF("GetRangeSection end 2\n");
+PRINTF("GetRangeSection end 2 pRS=%08x:%08x\n", (SIZE_T)pRS>>32, (SIZE_T)pRS&0x00000000FFFFFFFF);
+#define FFLUSH fflush
+FFLUSH(stdout);
+#undef FFLUSH
             return pRS;
 	}
 
@@ -291,6 +321,9 @@ PRINTF("GetRangeSection end 2\n");
         if ((addr < LowAddress) && (LastUsedRSIndex == 0))
 	{
 PRINTF("GetRangeSection end 3\n");
+#define FFLUSH fflush
+FFLUSH(stdout);
+#undef FFLUSH
             return NULL;
 	}
     }
@@ -299,6 +332,9 @@ PRINTF("GetRangeSection end 3\n");
         && (addr >= rh->array[LastUsedRSIndex-1].pRS->HighAddress))
     {
 PRINTF("GetRangeSection end 4\n");
+#define FFLUSH fflush
+FFLUSH(stdout);
+#undef FFLUSH
             return NULL;
     }
 
@@ -317,7 +353,13 @@ PRINTF("GetRangeSection end 4\n");
     rh->last_used_index = LastUsedRSIndex;
 
 PRINTF("GetRangeSection end 5\n");
+#define FFLUSH fflush
+FFLUSH(stdout);
+#undef FFLUSH
+	if (foundIndex<0) debug_trap2();
     return (foundIndex>=0)?rh->array[foundIndex].pRS:NULL;
+#undef PRINTF
+#define PRINTF(...) 
 }
 
 /*********************************************************************/
@@ -416,6 +458,9 @@ void ExecutionManager::AddCodeRange(TADDR          pStartRange,
 
 void ExecutionManager::AddRangeSection(RangeSection *pRS)
 {
+#undef PRINTF
+//#define PRINTF printf
+#define PRINTF(...)
 PRINTF("AddRangeSection begin, LowAddress=%08x, HighAddress=%08x\n", pRS->LowAddress, pRS->HighAddress);
     CrstHolder ch(&m_RangeCrst);
 PRINTF("AddRangeSection crst acquired\n");
@@ -424,6 +469,7 @@ PRINTF("AddRangeSection crst acquired\n");
         //initial call, create array pair and initialize their headers
         SIZE_T volume = sizeof(RangeSectionHandleHeader) + sizeof(RangeSectionHandle)*(RangeSectionHandleArrayInitialSize - 1);
         m_RangeSectionHandleWriterHeader = (RangeSectionHandleHeader*)(new char[volume]);
+	printf("allocated %08x:%08x\n", ((SIZE_T)m_RangeSectionHandleWriterHeader)>>32,((SIZE_T)m_RangeSectionHandleWriterHeader)&0x00000000ffffffff);
         m_RangeSectionHandleWriterHeader->capacity = RangeSectionHandleArrayInitialSize;
         m_RangeSectionHandleWriterHeader->size = 1; 
         m_RangeSectionHandleWriterHeader->array[0].LowAddress = pRS->LowAddress;
@@ -433,6 +479,7 @@ PRINTF("AddRangeSection crst acquired\n");
 	m_RangeSectionHandleWriterHeader->last_used_index = 0;
 
         RangeSectionHandleHeader *rh = (RangeSectionHandleHeader *)(new char[volume]);
+	printf("allocated %08x:%08x\n", ((SIZE_T)rh)>>32,((SIZE_T)rh)&0x00000000ffffffff);
         memcpy((void*)rh, (const void*)m_RangeSectionHandleWriterHeader, volume);
         rh->count = 1; //EM's unit
         m_RangeSectionHandleReaderHeader  = rh;
@@ -454,15 +501,18 @@ PRINTF("AddRangeSection rh and wh cached: rh->size=%d, rh->capacity=%d, wh->capa
 PRINTF("AddRangeSection outnumbered or outdated\n");
         //reallocate array
         delete[] (char*)wh;
+	printf("deleted %08x:%08x\n", (SIZE_T)wh>>32, (SIZE_T)wh&0x00000000ffffffff);
 PRINTF("AddRangeSection wh deleted\n");
 	SIZE_T capacity;
 	if ((rh->size+1) > rh->capacity)
 	{
+#define _DEBUG
 #ifdef _DEBUG
         	capacity = rh->capacity + RangeSectionHandleArrayIncrement;
 #else
         	capacity = rh->capacity * RangeSectionHandleArrayExpansionFactor;
 #endif //_DEBUG
+#undef _DEBUG
 	}
 	else
 	{
@@ -473,6 +523,10 @@ PRINTF("AddRangeSection wh deleted\n");
             + sizeof(RangeSectionHandle)*(capacity - 1);
 
         wh = (RangeSectionHandleHeader*)(new char[volume]);
+	//CHANGE
+	m_RangeSectionHandleWriterHeader = wh; //TODO make the same logic in Deleters
+	//END CHANGE
+	printf("allocated %08x:%08x\n", (SIZE_T)wh>>32, (SIZE_T)wh&0x00000000ffffffff);
 
 	printf("volume=%ld\n", volume);
 	fflush(stdout);
@@ -532,6 +586,8 @@ PRINTF("AddRangeSection end 3\n");
     }
 PRINTF("AddRangeSection end 4\n");
     return;
+#undef PRINTF
+#define PRINTF(...) 
 }
 
 void ExecutionManager::DeleteRangeSection(RangeSectionHandleHeader **pwh, RangeSectionHandleHeader *rh, int index)
@@ -548,6 +604,7 @@ PRINTF("DeleteRangeSection end 1\n");
     if (wh->capacity < rh->size)
     {
         delete (char*)wh;
+	printf("deleted %08x:%08x\n", (SIZE_T)wh>>32, (SIZE_T)wh&0x00000000ffffffff);
         SIZE_T size = rh->size;
         SIZE_T capacity = rh->capacity;
         SIZE_T volume = sizeof(RangeSectionHandleHeader)

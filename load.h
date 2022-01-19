@@ -13,6 +13,7 @@ public:
 	void SetSeed(unsigned int new_seed)
 	{
 		seed = new_seed;
+		seed_is_set = true;
 	}
 
 	unsigned int GetSeed();
@@ -74,3 +75,4 @@ private:
 
 int load_singlethreaded(bool set_seed, unsigned int seed);
 int load_multithreaded(bool set_seed, unsigned int seed);
+int load_multithreaded_rw_async(bool set_seed, unsigned int seed);
