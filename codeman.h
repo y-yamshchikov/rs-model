@@ -48,7 +48,16 @@ struct RangeSectionHandleHeader
     SIZE_T capacity;
     volatile int count;
     int last_used_index;
-    RangeSectionHandle array[1];
+    //RangeSectionHandle array[1];
+    RangeSectionHandle *array;
+
+    RangeSectionHandleHeader():
+        size(0),
+        capacity(0),
+        count(0),
+        last_used_index(-1),
+        array(nullptr)
+    {}
 };
 
 typedef void* PTR_IJitManager;
@@ -146,7 +155,7 @@ public:
 
     static void            AddRangeSection(RangeSection *pRS);
 
-    static void           DeleteRangeSection(RangeSectionHandleHeader **pwh, RangeSectionHandleHeader *rh, int index);
+    static void           DeleteRangeSection(RangeSectionHandleHeader *wh, RangeSectionHandleHeader *rh, int index);
 
     static void           DeleteRange(TADDR StartRange);
 

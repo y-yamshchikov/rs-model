@@ -625,7 +625,7 @@ int load_multithreaded_rw_async(bool set_seed, unsigned int seed)
 		}
 
 		adder_2.join();
-/*
+
 
 		CPU_ZERO(&cpu_set);
 		CPU_SET(2, &cpu_set);
@@ -683,14 +683,19 @@ int load_multithreaded_rw_async(bool set_seed, unsigned int seed)
 			exit(1);
 		}
 
-*/
+
 		reader_1.join();
-//		reader_2.join();
-//		reader_3.join();
-//		reader_4.join();
+		reader_2.join();
+		reader_3.join();
+		reader_4.join();
 	}
 
 	//PRINTF("RAND_MAX = %08x\n" ,RAND_MAX);
 	printf("test succeeded\n");
 	return 0;
+}
+
+int load_multithreaded_rd_async(bool set_seed, unsigned int seed)
+{
+
 }
