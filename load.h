@@ -76,3 +76,4 @@ private:
 int load_singlethreaded(bool set_seed, unsigned int seed);
 int load_multithreaded(bool set_seed, unsigned int seed);
 int load_multithreaded_rw_async(bool set_seed, unsigned int seed);
+int load_multithreaded_rwd_async(bool set_seed, unsigned int seed);

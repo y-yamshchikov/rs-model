@@ -110,7 +110,7 @@ class ExecutionManager
 
     enum
     {
-#define _DEBUG
+//#define _DEBUG
 #ifndef _DEBUG
         RangeSectionHandleArrayInitialSize = 100,
         RangeSectionHandleArrayExpansionFactor = 2
@@ -118,7 +118,7 @@ class ExecutionManager
         RangeSectionHandleArrayInitialSize = 8,
 	RangeSectionHandleArrayIncrement = 1
 #endif //(_DEBUG)
-#undef _DEBUG
+//#undef _DEBUG
     };
 
     static int FindRangeSectionHandleHelper(RangeSectionHandleHeader *h, TADDR addr);
@@ -128,6 +128,7 @@ class ExecutionManager
         return -(index+1);
     }
 
+    static void check_writer_array();
     static int DecodeRangeSectionIndex(int codedIndex)
     {
         return -codedIndex - 1;

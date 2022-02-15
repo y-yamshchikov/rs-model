@@ -1,4 +1,3 @@
-
 #include <unistd.h>
 #include <cstring>
 #include <cstdio>
@@ -49,18 +48,22 @@ unsigned int LoadSettings::GetSeed()
 
 void adder(ExecutionManager *EM, const LoadSettings &load_settings, const std::vector<Range> &ranges, int i, int batch_no);
 void reader(ExecutionManager *EM, const LoadSettings &load_settings, const std::vector<Range> &ranges, int i, int batch_no);
+void negative_reader(ExecutionManager *EM, const LoadSettings &load_settings, const std::vector<Range> &ranges, int i, int batch_no);
+void deleter(ExecutionManager *EM, const LoadSettings &load_settings, const std::vector<Range> &ranges, int i, int batch_no);
 
 int main(int argc, char* argv[])
 {
 	if (argc > 1)
 	{
-		load_multithreaded_rw_async(true, atoi(argv[1]));
+		load_multithreaded_rwd_async(true, atoi(argv[1]));
+		//load_multithreaded_rw_async(true, atoi(argv[1]));
 		//load_multithreaded(true, atoi(argv[1]));
 		//load_singlethreaded(true, atoi(argv[1]));
 	}
 	else
 	{
-		load_multithreaded_rw_async(false, 0);
+		load_multithreaded_rwd_async(false, 0);
+		//load_multithreaded_rw_async(false, 0);
 		//load_multithreaded(false, 0);
 		//load_singlethreaded(false, 0);
 	}
@@ -121,7 +124,7 @@ int load_singlethreaded(bool set_seed, unsigned int seed)
 
 		if (load_settings.IsDescending())
 		{
-			sort(nums.begin(), nums.end(), std::greater<int>());
+			sort(nums.begin(), nums.end(), std::greater<unsigned int>());
 		}
 		else
 		{
@@ -131,8 +134,16 @@ int load_singlethreaded(bool set_seed, unsigned int seed)
 		for (int n = 0; n < elems; n++)
 		{
 			Range elem;
-			elem.LowAddress = (TADDR)nums[n*2];
-			elem.HighAddress = (TADDR)nums[n*2+1];
+			if (load_settings.IsDescending())
+			{
+				elem.HighAddress = (TADDR)nums[n*2];
+				elem.LowAddress = (TADDR)nums[n*2+1];
+			}
+			else
+			{
+				elem.LowAddress = (TADDR)nums[n*2];
+				elem.HighAddress = (TADDR)nums[n*2+1];
+			}
 			
 			if (load_settings.IsRandom()) //random load is building on Ascending sorting
 			{
@@ -290,7 +301,7 @@ int load_multithreaded(bool set_seed, unsigned int seed)
 
 		if (load_settings.IsDescending())
 		{
-			sort(nums.begin(), nums.end(), std::greater<int>());
+			sort(nums.begin(), nums.end(), std::greater<unsigned int>());
 		}
 		else
 		{
@@ -302,8 +313,16 @@ int load_multithreaded(bool set_seed, unsigned int seed)
 		for (int n = 0; n < elems; n++)
 		{
 			Range elem;
-			elem.LowAddress = (TADDR)nums[n*2];
-			elem.HighAddress = (TADDR)nums[n*2+1];
+			if (load_settings.IsDescending())
+			{
+				elem.HighAddress = (TADDR)nums[n*2];
+				elem.LowAddress = (TADDR)nums[n*2+1];
+			}
+			else
+			{
+				elem.LowAddress = (TADDR)nums[n*2];
+				elem.HighAddress = (TADDR)nums[n*2+1];
+			}
 			
 			if (load_settings.IsRandom()) //random load is building on Ascending sorting
 			{
@@ -498,6 +517,26 @@ void reader(ExecutionManager *EM, const LoadSettings &load_settings, const std::
 	}
 }
 
+void deleter(ExecutionManager *EM, const LoadSettings &load_settings, const std::vector<Range> &ranges, int i, int batch_no)
+{
+	printf("deleter started: batch_no = %d\n", batch_no);
+	fflush(stdout);
+	int elems = ranges.size();
+
+	for (int j = 0; j < elems; ++j)
+	{
+		PRINTF("j=%d\n", j);
+		TADDR LowAddress = (TADDR)ranges[j].LowAddress;
+		TADDR HighAddress = (TADDR)ranges[j].HighAddress;
+		PRINTF("deleting low=%08x, high=%08x\n", LowAddress, HighAddress);
+
+		EM->DeleteRange(LowAddress);
+		//printf("deleter with batch_no = %d, j = %d\n", batch_no, j);
+	}
+	printf("deleter ended: batch_no = %d\n", batch_no);
+	fflush(stdout);
+}
+
 
 
 int load_multithreaded_rw_async(bool set_seed, unsigned int seed)
@@ -553,7 +592,7 @@ int load_multithreaded_rw_async(bool set_seed, unsigned int seed)
 
 		if (load_settings.IsDescending())
 		{
-			sort(nums.begin(), nums.end(), std::greater<int>());
+			sort(nums.begin(), nums.end(), std::greater<unsigned int>());
 		}
 		else
 		{
@@ -565,8 +604,16 @@ int load_multithreaded_rw_async(bool set_seed, unsigned int seed)
 		for (int n = 0; n < elems; n++)
 		{
 			Range elem;
-			elem.LowAddress = (TADDR)nums[n*2];
-			elem.HighAddress = (TADDR)nums[n*2+1];
+			if (load_settings.IsDescending())
+			{
+				elem.HighAddress = (TADDR)nums[n*2];
+				elem.LowAddress = (TADDR)nums[n*2+1];
+			}
+			else
+			{
+				elem.LowAddress = (TADDR)nums[n*2];
+				elem.HighAddress = (TADDR)nums[n*2+1];
+			}
 			
 			if (load_settings.IsRandom()) //random load is building on Ascending sorting
 			{
@@ -695,7 +742,379 @@ int load_multithreaded_rw_async(bool set_seed, unsigned int seed)
 	return 0;
 }
 
-int load_multithreaded_rd_async(bool set_seed, unsigned int seed)
+int load_multithreaded_rwd_async(bool set_seed, unsigned int seed)
 {
+	const int epochs = 1000;	
+	const int elems = 1000;	
 
+	LoadSettings load_settings;
+
+///------------------load settings-----------------//
+	load_settings.OrderDescending();
+	//load_settings.OrderAscending();
+	//load_settings.OrderRandom();
+	//load_settings.SetDeleteDensity(10);
+	load_settings.SetDeleteDensity(90);
+	//load_settings.SetReadLoadDensity(10000);
+	load_settings.SetReadLoadDensity(1);
+
+
+	if (set_seed)
+	{
+		load_settings.SetSeed(seed);
+	}
+	printf("seed = %d\n", load_settings.GetSeed());
+	srand(load_settings.GetSeed());
+
+
+	ExecutionManager *EM = new ExecutionManager();
+	EM->Init();
+
+	for (int i = 0; i < epochs; ++i)
+	{
+		//EM->DumpReaderArray();
+		EM->Reinit(); //pretend we have new EM instance
+
+		printf("i=%d\n", i);
+		fflush(stdout);
+		vector<unsigned int>  nums;
+		vector<Range> ranges;
+
+		EM->Reinit();
+
+		for (int n = 0; n < elems*2; n++)
+		{
+			unsigned int rnd;
+			bool f = false;
+			do
+			{
+				f = false;
+				rnd = (rand()<<1) + rand()%2;
+				rnd = rnd<<16;
+				for (auto x : nums)
+				{
+					if( rnd == x)
+						f = true;
+				} 
+			}while ( f );
+			nums.push_back(rnd);
+		}
+
+		if (load_settings.IsDescending())
+		{
+			sort(nums.begin(), nums.end(), std::greater<unsigned int>());
+		}
+		else
+		{
+			sort(nums.begin(), nums.end()); //Ascending sorting, uses for Ascending and Random load
+		}
+
+		vector<Range> add_ranges_part[4];	
+		vector<Range> read_ranges_part[4];	
+		vector<Range> delete_ranges_part[4];	
+
+		for (int n = 0; n < elems; n++)
+		{
+			Range elem;
+			if (load_settings.IsDescending())
+			{
+				elem.HighAddress = (TADDR)nums[n*2];
+				elem.LowAddress = (TADDR)nums[n*2+1];
+			}
+			else
+			{
+				elem.LowAddress = (TADDR)nums[n*2];
+				elem.HighAddress = (TADDR)nums[n*2+1];
+			}
+			
+			if (load_settings.IsRandom()) //random load is building on Ascending sorting
+			{
+				int index = rand()%(ranges.size() + 1);			
+				vector<Range>::iterator it = (ranges.begin() + index);
+				ranges.insert(it, elem);
+
+				int part = rand()%4;
+
+				int add_part_index = rand()%(add_ranges_part[part].size() + 1);			
+				vector<Range>::iterator add_it_part = (add_ranges_part[part].begin() + add_part_index);
+				add_ranges_part[part].insert(add_it_part, elem);
+
+				if ((rand()%load_settings.GetDeleteDivisor() == 0))
+				{
+					int delete_part_index = rand()%(delete_ranges_part[part].size() + 1);			
+					vector<Range>::iterator delete_it_part = (delete_ranges_part[part].begin() + delete_part_index);
+					delete_ranges_part[part].insert(delete_it_part, elem);
+				}
+				else
+				{
+					int read_part_index = rand()%(read_ranges_part[part].size() + 1);			
+					vector<Range>::iterator read_it_part = (read_ranges_part[part].begin() + read_part_index);
+					read_ranges_part[part].insert(read_it_part, elem);
+				}
+			}
+			else
+			{
+				ranges.push_back(elem);
+
+				add_ranges_part[n%4].push_back(elem);
+
+				if ((rand()%load_settings.GetDeleteDivisor() == 0))
+				{
+					delete_ranges_part[n%4].push_back(elem);
+				}
+				else
+				{
+					read_ranges_part[n%4].push_back(elem);
+				}
+			}
+		}
+//general array created
+//partial arrays created
+		fprintf(stderr, "i=%d\n", i);
+
+		//adder 1
+		cpu_set_t cpu_set;
+		CPU_ZERO(&cpu_set);
+		CPU_SET(0, &cpu_set);
+		std::thread adder_1(adder,EM, load_settings, add_ranges_part[0], i, 0);
+		int err = pthread_setaffinity_np(adder_1.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		//adder 2
+		CPU_ZERO(&cpu_set);
+		CPU_SET(2, &cpu_set);
+		std::thread adder_2(adder,EM, load_settings, add_ranges_part[1], i, 1);
+		err = pthread_setaffinity_np(adder_2.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+
+		adder_1.join();
+		adder_2.join();
+//-----------------------
+
+		//reader 1
+		CPU_ZERO(&cpu_set);
+		CPU_SET(8, &cpu_set);
+		std::thread reader_1(reader,EM, load_settings, read_ranges_part[0], i, 0);
+		err = pthread_setaffinity_np(reader_1.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+
+		//reader 2
+		CPU_ZERO(&cpu_set);
+		CPU_SET(10, &cpu_set);
+		std::thread reader_2(reader,EM, load_settings, read_ranges_part[1], i, 1);
+		err = pthread_setaffinity_np(reader_2.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		//adder 3
+		CPU_ZERO(&cpu_set);
+		CPU_SET(0, &cpu_set);
+		std::thread adder_3(adder,EM, load_settings, add_ranges_part[2], i, 2);
+		err = pthread_setaffinity_np(adder_3.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		//adder 4
+		CPU_ZERO(&cpu_set);
+		CPU_SET(2, &cpu_set);
+		std::thread adder_4(adder,EM, load_settings, add_ranges_part[3], i, 3);
+		err = pthread_setaffinity_np(adder_4.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		//deleter 1
+		CPU_ZERO(&cpu_set);
+		CPU_SET(4, &cpu_set);
+		std::thread deleter_1(deleter,EM, load_settings, delete_ranges_part[0], i, 0);
+		err = pthread_setaffinity_np(deleter_1.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		//deleter 2
+		CPU_ZERO(&cpu_set);
+		CPU_SET(6, &cpu_set);
+		std::thread deleter_2(deleter,EM, load_settings, delete_ranges_part[1], i, 1);
+		err = pthread_setaffinity_np(deleter_2.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		adder_3.join();
+		adder_4.join();
+//-----------------------
+
+		//reader 3
+		CPU_ZERO(&cpu_set);
+		CPU_SET(12, &cpu_set);
+		std::thread reader_3(reader,EM, load_settings, read_ranges_part[2], i, 2);
+		err = pthread_setaffinity_np(reader_3.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		//reader 4
+		CPU_ZERO(&cpu_set);
+		CPU_SET(14, &cpu_set);
+		std::thread reader_4(reader,EM, load_settings, read_ranges_part[3], i, 3);
+		err = pthread_setaffinity_np(reader_4.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		//deleter 3
+		CPU_ZERO(&cpu_set);
+		CPU_SET(0, &cpu_set);
+		std::thread deleter_3(deleter,EM, load_settings, delete_ranges_part[2], i, 2);
+		err = pthread_setaffinity_np(deleter_3.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		//deleter 4
+		CPU_ZERO(&cpu_set);
+		CPU_SET(2, &cpu_set);
+		std::thread deleter_4(deleter,EM, load_settings, delete_ranges_part[3], i, 3);
+		err = pthread_setaffinity_np(deleter_4.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+
+		reader_1.join();
+		reader_2.join();
+		reader_3.join();
+		reader_4.join();
+
+		deleter_1.join();
+		deleter_2.join();
+		deleter_3.join();
+		deleter_4.join();
+//-----------------------
+		//negative reader 1
+		CPU_ZERO(&cpu_set);
+		CPU_SET(14, &cpu_set);
+		std::thread negative_reader_1(negative_reader, EM, load_settings, delete_ranges_part[0], i, 0);
+		err = pthread_setaffinity_np(negative_reader_1.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		//negative reader 2
+		CPU_ZERO(&cpu_set);
+		CPU_SET(14, &cpu_set);
+		std::thread negative_reader_2(negative_reader, EM, load_settings, delete_ranges_part[1], i, 1);
+		err = pthread_setaffinity_np(negative_reader_2.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		//negative reader 3
+		CPU_ZERO(&cpu_set);
+		CPU_SET(14, &cpu_set);
+		std::thread negative_reader_3(negative_reader, EM, load_settings, delete_ranges_part[2], i, 2);
+		err = pthread_setaffinity_np(negative_reader_3.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+		//negative reader 4
+		CPU_ZERO(&cpu_set);
+		CPU_SET(14, &cpu_set);
+		std::thread negative_reader_4(negative_reader, EM, load_settings, delete_ranges_part[3], i, 3);
+		err = pthread_setaffinity_np(negative_reader_4.native_handle(), sizeof(cpu_set_t), &cpu_set);
+		if (err != 0)
+		{
+			printf("pthread_setaffinity_np failed\n");
+			exit(1);
+		}
+
+
+		negative_reader_1.join();
+		negative_reader_2.join();
+		negative_reader_3.join();
+		negative_reader_4.join();
+	}
+
+	//PRINTF("RAND_MAX = %08x\n" ,RAND_MAX);
+	printf("test succeeded\n");
+	return 0;
+
+}
+
+void negative_reader(ExecutionManager *EM, const LoadSettings &load_settings, const std::vector<Range> &ranges, int i, int batch_no)
+{
+//signals if element was found
+//this check is used to ensure deletions work properly
+	int elems = ranges.size();
+
+	for (int k = 0; k < elems; ++k)
+	{
+
+		for (int m = 0; m < load_settings.GetReadLoadDensity(); m++)
+		{
+			int random_delta = rand()%((unsigned long long)ranges[k].HighAddress - (unsigned long long)ranges[k].LowAddress - 1);
+			//int noise = rand()%100 - 50;
+			int noise = 0;
+			TADDR pCode = (TADDR)((unsigned long long)ranges[k].LowAddress + random_delta + noise);
+
+			RangeSection *pRS = EM->GetRangeSection(pCode);
+			if (pRS) 
+			{
+				debug_trap();
+				printf("element found, but should not be: i = %d, batch_no = %d, elems = %d, k = %d, elem = %08x, search for %08x\n", i, batch_no,  elems, k, ranges[k].LowAddress, pCode);
+				//for (int n = 0; n < RangeSectionSize; ++n)
+				//{
+				//	printf("%08x:%08x ", pRangeSectionHandleArray[n].LowAddress, pRangeSectionHandleArray[n].pRS->HighAddress);
+				//}
+				//printf("RangeSectionSize=%d", RangeSectionSize);
+				//printf("\n\n");
+				//EM->DumpReaderArray();
+				fflush(stdout);
+				debug_trap();
+				exit(-1);
+			}
+		}
+	}
 }
