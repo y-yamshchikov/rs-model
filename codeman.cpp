@@ -1,5 +1,3 @@
-#define FFLUSH(...)
-#define PRINTF(...)
 #include "codeman.h"
 #include <sched.h>
 #include <atomic>
@@ -68,7 +66,6 @@ BEGIN:
     h = (RangeSectionHandleHeader*)m_RangeSectionHandleReaderHeader;
 INCREMENT:
     count = h->count;
-PRINTF("ReaderLockHolder constructor, after fetch count, h=%08x, count=%d\n", h, count);
     if (count == 0)
         goto BEGIN;
     if (count != InterlockedCompareExchangeT((int*)(&(h->count)), count+1, count))
@@ -266,18 +263,12 @@ void ExecutionManager::Reinit()//NOT THREADSAFE !!!
 
 RangeSection* ExecutionManager::GetRangeSection(TADDR addr)
 {
-#define PRINTF(...)
-PRINTF("GetRangeSection begin, addr=%08x\n", addr);
     if (m_RangeSectionHandleReaderHeader == nullptr)
     {
-PRINTF("GetRangeSetion end 1\n");
-FFLUSH(stdout);
         return NULL;
     }
 
-PRINTF("GetRangeSection before rlh\n");
     ReaderLockHolder rlh;
-PRINTF("GetRangeSection rlh acquired\n");
     RangeSectionHandleHeader *rh = rlh.h;
     int LastUsedRSIndex = rh->last_used_index;
     if (LastUsedRSIndex != -1)
@@ -289,17 +280,12 @@ PRINTF("GetRangeSection rlh acquired\n");
         //positive case
         if ((addr >= LowAddress) && (addr < HighAddress))
 	{
-PRINTF("GetRangeSection end 2\n");
-PRINTF("GetRangeSection end 2 pRS=%08x:%08x\n", (SIZE_T)pRS>>32, (SIZE_T)pRS&0x00000000FFFFFFFF);
-FFLUSH(stdout);
             return pRS;
 	}
 
         //negative case
         if ((addr < LowAddress) && (LastUsedRSIndex == 0))
 	{
-PRINTF("GetRangeSection end 3\n");
-FFLUSH(stdout);
             return NULL;
 	}
     }
@@ -307,8 +293,6 @@ FFLUSH(stdout);
         && (addr < rh->array[LastUsedRSIndex].LowAddress)
         && (addr >= rh->array[LastUsedRSIndex-1].pRS->HighAddress))
     {
-PRINTF("GetRangeSection end 4\n");
-FFLUSH(stdout);
             return NULL;
     }
 
@@ -326,12 +310,7 @@ FFLUSH(stdout);
 //    if (g_SystemInfo.dwNumberOfProcessors < 4 || !GCHeapUtilities::IsServerHeap() || !GCHeapUtilities::IsGCInProgress())
     rh->last_used_index = LastUsedRSIndex;
 
-PRINTF("GetRangeSection end 5\n");
-FFLUSH(stdout);
-	//if (foundIndex<0) debug_trap2();
     return (foundIndex>=0)?rh->array[foundIndex].pRS:NULL;
-#undef PRINTF
-#define PRINTF(...) 
 }
 
 /*********************************************************************/
@@ -352,7 +331,6 @@ FFLUSH(stdout);
 //
 int ExecutionManager::FindRangeSectionHandleHelper(RangeSectionHandleHeader *h, TADDR addr)
 {
-PRINTF("FindRangeSectionHandleHelper begin\n");
     RangeSectionHandle *array = h->array;
 
     _ASSERTE(array != nullptr);
@@ -360,7 +338,6 @@ PRINTF("FindRangeSectionHandleHelper begin\n");
 
     if ((int)h->size == 0)
     {
-PRINTF("FindRangeSectionHandleHelper end 1\n");
         return EncodeRangeSectionIndex(0);
     }
 
@@ -370,13 +347,11 @@ PRINTF("FindRangeSectionHandleHelper end 1\n");
 
     if(addr < array[0].LowAddress)
     {
-PRINTF("FindRangeSectionHandleHelper end 2\n");
         return EncodeRangeSectionIndex(0);
     }
 
     if (addr >= array[iHigh].pRS->HighAddress)
     {
-PRINTF("FindRangeSectionHandleHelper end 3\n");
         return EncodeRangeSectionIndex(iHigh + 1);
     }
 
@@ -401,12 +376,10 @@ PRINTF("FindRangeSectionHandleHelper end 3\n");
     if ((addr >= array[iHigh].LowAddress)
             && (addr < array[iHigh].pRS->HighAddress))
     {
-PRINTF("FindRangeSectionHandleHelper end 4\n");
         return iHigh;
     }
     else
     {
-PRINTF("FindRangeSectionHandleHelper end 5\n");
         return EncodeRangeSectionIndex(iHigh + 1);
     }
 }
@@ -428,10 +401,7 @@ void ExecutionManager::AddCodeRange(TADDR          pStartRange,
 
 void ExecutionManager::AddRangeSection(RangeSection *pRS)
 {
-#define PRINTF(...)
-PRINTF("AddRangeSection begin, LowAddress=%08x, HighAddress=%08x\n", pRS->LowAddress, pRS->HighAddress);
     CrstHolder ch(&m_RangeCrst);
-PRINTF("AddRangeSection crst acquired\n");
     if (m_RangeSectionHandleReaderHeader == nullptr)
     {
         //initial call, create array pair and initialize their headers
@@ -457,26 +427,17 @@ PRINTF("AddRangeSection crst acquired\n");
         rh->array[0] = m_RangeSectionHandleWriterHeader->array[0];
 
         m_RangeSectionHandleReaderHeader  = rh;
-PRINTF("AddRangeSection end 1: rh=%08x, wh=%08x\n", rh, (RangeSectionHandleHeader*)m_RangeSectionHandleWriterHeader);
-        check_writer_array();
 	return;
     }
 
     //rh and wh there are not null, so we can and should lock the wh
-PRINTF("AddRangeSection before wlh\n");
     WriterLockHolder wlh;
-PRINTF("AddRangeSection wlh acquired\n");
     RangeSectionHandleHeader *rh = (RangeSectionHandleHeader *)m_RangeSectionHandleReaderHeader;
     RangeSectionHandleHeader *wh = wlh.h; 
-PRINTF("AddRangeSection rh and wh cached: rh=%08x, wh=%08x\n", rh, wh);
-PRINTF("AddRangeSection rh and wh cached: rh->size=%d, rh->capacity=%d, wh->capacity=%d\n", rh->size, rh->capacity, wh->capacity);
     if (wh->capacity < (rh->size+1)) //can't add to writer's array, expand
     {
-PRINTF("AddRangeSection outnumbered or outdated\n");
         //reallocate array
         delete[] wh->array;
-	printf("deleted %08x:%08x\n", (SIZE_T)wh->array>>32, (SIZE_T)wh->array&0x00000000ffffffff);
-PRINTF("AddRangeSection writer's array deleted\n");
 	if ((rh->size+1) > rh->capacity)
 	{
 //#define _DEBUG
@@ -498,27 +459,20 @@ PRINTF("AddRangeSection writer's array deleted\n");
 	//so we have to maintain count = 0 until wlh destructor
         //thoroughly do his job of interchanging header pointers
         wh->array = new RangeSectionHandle[wh->capacity];
-	printf("writer's array allocated %08x:%08x\n", (SIZE_T)wh->array>>32, (SIZE_T)wh->array&0x00000000ffffffff);
-	fflush(stdout);
-PRINTF("AddRangeSection wh allocated\n");
         wh->size = rh->size;
 	//TODO what about GC lastused usage condition?
         wh->last_used_index = rh->last_used_index;
-PRINTF("AddRangeSection wh restored\n");
     }
     else
     {
         wh->size = rh->size;
         wh->last_used_index = -1;
-PRINTF("AddRangeSection wh refreshed\n");
     }
 
-PRINTF("AddRangeSection deciding where to add\n");
     //where to add?
     SIZE_T size = wh->size;
     if ((size == 0) || (pRS->LowAddress >= rh->array[size - 1].pRS->HighAddress))
     {
-PRINTF("AddRangeSection size==0 or tail adding\n");
         if (size > 0)
 	{
             memcpy((void*)(wh->array), (const void*)(rh->array), wh->size*sizeof(RangeSectionHandle));
@@ -527,53 +481,38 @@ PRINTF("AddRangeSection size==0 or tail adding\n");
         wh->array[size].pRS = pRS;
         wh->size = size + 1;
         //last used index was not changed by this operation
-PRINTF("AddRangeSection end 2\n");
-        check_writer_array();
         return; //assume that ~WriterLockHolder() executes before ~CrstHolder()
     }
 
-PRINTF("AddRangeSection before call of FindRangeSectionHandleHelper, wh=%08x, LowAddress=%08x\n", wh, pRS->LowAddress);
     int index = FindRangeSectionHandleHelper(rh, pRS->LowAddress);
     if (index < 0)
     {
-PRINTF("AddRangeSection index<0\n");
         index = DecodeRangeSectionIndex(index);
         //shift and push
         memcpy(wh->array, rh->array, index*sizeof(RangeSectionHandle));
         memcpy(wh->array+index+1, rh->array+index, (size-index)*sizeof(RangeSectionHandle));
-PRINTF("AddRangeSection after two memcpys (instead of memmove) (index<0)\n");
         wh->array[index].LowAddress = pRS->LowAddress;
         wh->array[index].pRS = pRS;
         wh->size = size + 1;
 	//TODO what about GC lastused usage condition?
         if (rh->last_used_index >= index)
             wh->last_used_index = rh->last_used_index + 1;//aware of readers just running rh
-PRINTF("AddRangeSection end 3\n");
-        check_writer_array();
         return;
     }
-PRINTF("AddRangeSection end 4\n");
-        check_writer_array();
     return;
-#undef PRINTF
-#define PRINTF(...) 
 }
 
 void ExecutionManager::DeleteRangeSection(RangeSectionHandleHeader *wh, RangeSectionHandleHeader *rh, int index)
 {
-PRINTF("DeleteRangeSection begin\n");
 
     if (index < 0)
     {
-PRINTF("DeleteRangeSection end 1\n");
-        check_writer_array();
         return;
     }
 
     if (wh->capacity != rh->capacity)
     {
         delete[] wh->array;
-	printf("deleted %08x:%08x\n", (SIZE_T)wh->array>>32, (SIZE_T)wh->array&0x00000000ffffffff);
 	wh->array = new RangeSectionHandle[rh->capacity];
     }
     wh->size = rh->size;
@@ -592,8 +531,6 @@ PRINTF("DeleteRangeSection end 1\n");
     
     //TODO what about GC lastused usage condition?
     wh->last_used_index = LastUsedRSIndex;
-    check_writer_array();
-PRINTF("DeleteRangeSection end 2\n");
 }
 
 void ExecutionManager::AddRangeHelper(TADDR          pStartRange,
@@ -602,8 +539,6 @@ void ExecutionManager::AddRangeHelper(TADDR          pStartRange,
                                       RangeSection::RangeSectionFlags flags,
                                       TADDR          pHeapListOrZapModule)
 {
-PRINTF("AddRangeHelper begin\n");
-
     RangeSection *pnewrange = new RangeSection;
 
     _ASSERTE(pEndRange > pStartRange);
@@ -617,14 +552,11 @@ PRINTF("AddRangeHelper begin\n");
     pnewrange->pUnwindInfoTable = NULL;
 #endif // defined(TARGET_AMD64)
     AddRangeSection(pnewrange);
-PRINTF("AddRangeHelper end\n");
 }
 
 // Deletes a single range starting at pStartRange
 void ExecutionManager::DeleteRange(TADDR pStartRange)
 {
-PRINTF("DeleteRange begin\n");
-
     {
         // Acquire the Crst before unlinking a RangeList.
         // NOTE: The Crst must be acquired BEFORE we grab the writer lock, as the
@@ -644,12 +576,9 @@ PRINTF("DeleteRange begin\n");
 	{
             rh->array[index].pRS->pNextPendingDeletion = (RangeSection*)m_RangeSectionPendingDeletion;
             m_RangeSectionPendingDeletion = rh->array[index].pRS;
-		//printf("DeleteRange: pending deletion low = %08x:%08x; pRS = %08x:%08x\n", ((TADDR)(pStartRange))>>32, pStartRange, ((TADDR)rh->array[index].pRS)>>32, rh->array[index].pRS);
             DeleteRangeSection(wlh.h, rh, index);
 	}
-        check_writer_array();
     }
-PRINTF("DeleteRange end\n");
 }
 
 
