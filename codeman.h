@@ -110,7 +110,7 @@ class ExecutionManager
 
     enum
     {
-//#define _DEBUG
+#define _DEBUG
 #ifndef _DEBUG
         RangeSectionHandleArrayInitialSize = 100,
         RangeSectionHandleArrayExpansionFactor = 2

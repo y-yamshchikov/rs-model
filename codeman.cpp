@@ -7,6 +7,8 @@
 #include <cstring>
 #include <cstdio>
 
+#define DACCESS_COMPILE
+
 #define _ASSERTE(...)
 #define NOINLINE
 void debug_trap2(void)
@@ -80,12 +82,13 @@ ExecutionManager::ReaderLockHolder::~ReaderLockHolder()
 	static int cumulative = 0;
 //    FastInterlockDecrement(&m_dwReaderCount);
     int count;
-DECREMENT:
-    count = h->count;
-    if (count != InterlockedCompareExchangeT((int*)&(h->count), count-1, count))
+
+    do
     {
-        goto DECREMENT;
+        count = h->count;
     }
+    while (count != InterlockedCompareExchangeT((int*)&(h->count), count-1, count));
+
     if (count == 1)// h->count == 0
     {
         //we are here in relatively rare case
@@ -157,15 +160,16 @@ ExecutionManager::WriterLockHolder::WriterLockHolder()
 
     DWORD dwSwitchCount = 0;
 
-
-FETCH:
-    //Thread::IncForbidSuspendThread();
-    h = (RangeSectionHandleHeader*)m_RangeSectionHandleWriterHeader;
-    if ((h == nullptr)||(h->count != 0))
+    while (true)
     {
+        //Thread::IncForbidSuspendThread();
+        h = (RangeSectionHandleHeader*)m_RangeSectionHandleWriterHeader;
+
+        if (!((h == nullptr)||(h->count != 0)))
+            break;
+
         //Thread::DecForbidSuspendThread();
         __SwitchToThread(0, ++dwSwitchCount);
-        goto FETCH;
     }
 
     //EE_LOCK_TAKEN(GetPtrForLockContract());
@@ -180,11 +184,12 @@ ExecutionManager::WriterLockHolder::~WriterLockHolder()
 
     //removing EM's unit from old reader's header, so now latest leaving
     //user will attach the header to writer's slot
-DECREMENT:
-    count = old_rh->count;
-    
-    if (count != InterlockedCompareExchangeT((int*)&(old_rh->count), count-1, count))
-        goto DECREMENT;
+    do
+    {
+        count = old_rh->count;
+    }
+    while (count != InterlockedCompareExchangeT((int*)&(old_rh->count), count-1, count));
+
     if (count == 1)// h->count == 0, all readers left, we've just removed EM's unit,
                    //now attach the header to writer's slot:
     {
@@ -270,6 +275,7 @@ RangeSection* ExecutionManager::GetRangeSection(TADDR addr)
 
     ReaderLockHolder rlh;
     RangeSectionHandleHeader *rh = rlh.h;
+#ifndef DACCESS_COMPILE
     int LastUsedRSIndex = rh->last_used_index;
     if (LastUsedRSIndex != -1)
     {
@@ -295,9 +301,11 @@ RangeSection* ExecutionManager::GetRangeSection(TADDR addr)
     {
             return NULL;
     }
+#endif //DACCESS_COMPILE
 
     int foundIndex = FindRangeSectionHandleHelper(rh, addr);
 
+#ifndef DACCESS_COMPILE
     if (foundIndex >= 0)
     {
         LastUsedRSIndex = foundIndex;
@@ -309,6 +317,7 @@ RangeSection* ExecutionManager::GetRangeSection(TADDR addr)
 
 //    if (g_SystemInfo.dwNumberOfProcessors < 4 || !GCHeapUtilities::IsServerHeap() || !GCHeapUtilities::IsGCInProgress())
     rh->last_used_index = LastUsedRSIndex;
+#endif //DACCESS_COMPILE
 
     return (foundIndex>=0)?rh->array[foundIndex].pRS:NULL;
 }
@@ -440,7 +449,7 @@ void ExecutionManager::AddRangeSection(RangeSection *pRS)
         delete[] wh->array;
 	if ((rh->size+1) > rh->capacity)
 	{
-//#define _DEBUG
+#define _DEBUG
 #ifdef _DEBUG
         	wh->capacity = rh->capacity + RangeSectionHandleArrayIncrement;
 #else

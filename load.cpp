@@ -750,13 +750,13 @@ int load_multithreaded_rwd_async(bool set_seed, unsigned int seed)
 	LoadSettings load_settings;
 
 ///------------------load settings-----------------//
-	load_settings.OrderDescending();
+	//load_settings.OrderDescending();
 	//load_settings.OrderAscending();
-	//load_settings.OrderRandom();
-	//load_settings.SetDeleteDensity(10);
-	load_settings.SetDeleteDensity(90);
-	//load_settings.SetReadLoadDensity(10000);
-	load_settings.SetReadLoadDensity(1);
+	load_settings.OrderRandom();
+	load_settings.SetDeleteDensity(10);
+	//load_settings.SetDeleteDensity(90);
+	load_settings.SetReadLoadDensity(10000);
+	//load_settings.SetReadLoadDensity(1);
 
 
 	if (set_seed)
