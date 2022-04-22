@@ -449,7 +449,7 @@ void ExecutionManager::AddRangeSection(RangeSection *pRS)
         delete[] wh->array;
 	if ((rh->size+1) > rh->capacity)
 	{
-#define _DEBUG
+//#define _DEBUG
 #ifdef _DEBUG
         	wh->capacity = rh->capacity + RangeSectionHandleArrayIncrement;
 #else
