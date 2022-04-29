@@ -110,7 +110,7 @@ class ExecutionManager
 
     enum
     {
-//#define _DEBUG
+#define _DEBUG
 #ifndef _DEBUG
         RangeSectionHandleArrayInitialSize = 100,
         RangeSectionHandleArrayExpansionFactor = 2
@@ -118,7 +118,7 @@ class ExecutionManager
         RangeSectionHandleArrayInitialSize = 8,
 	RangeSectionHandleArrayIncrement = 1
 #endif //(_DEBUG)
-//#undef _DEBUG
+#undef _DEBUG
     };
 
     static int FindRangeSectionHandleHelper(RangeSectionHandleHeader *h, TADDR addr);

@@ -449,13 +449,13 @@ void ExecutionManager::AddRangeSection(RangeSection *pRS)
         delete[] wh->array;
 	if ((rh->size+1) > rh->capacity)
 	{
-//#define _DEBUG
+#define _DEBUG
 #ifdef _DEBUG
         	wh->capacity = rh->capacity + RangeSectionHandleArrayIncrement;
 #else
         	wh->capacity = rh->capacity * RangeSectionHandleArrayExpansionFactor;
 #endif //_DEBUG
-//#undef _DEBUG
+#undef _DEBUG
 	}
 	else
 	{
@@ -519,18 +519,14 @@ void ExecutionManager::DeleteRangeSection(RangeSectionHandleHeader *wh, RangeSec
         return;
     }
 
-    if (wh->capacity != rh->capacity)
-    {
-        delete[] wh->array;
-	wh->array = new RangeSectionHandle[rh->capacity];
-    }
-    wh->size = rh->size;
-    wh->capacity = rh->capacity;
+    //RangeSection storage guarantees we have reader's and writer's count differ at most 1
+    _ASSERTE(wh->count >= rh->count-1);
+
+    wh->size = rh->size-1;
 
     //copying header + elements until deleted
     memcpy((void*)wh->array, (const void*)rh->array, index*sizeof(RangeSectionHandle));
     memcpy((void*)(wh->array+index), (const void*)(rh->array+index+1), (rh->size-index-1)*sizeof(RangeSectionHandle));
-    wh->size--;
 
     int LastUsedRSIndex = rh->last_used_index;
     if (LastUsedRSIndex > index)
