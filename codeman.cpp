@@ -520,7 +520,7 @@ void ExecutionManager::DeleteRangeSection(RangeSectionHandleHeader *wh, RangeSec
     }
 
     //RangeSection storage guarantees we have reader's and writer's count differ at most 1
-    _ASSERTE(wh->count >= rh->count-1);
+    _ASSERTE(wh->size+1 >= rh->size);
 
     wh->size = rh->size-1;
 
