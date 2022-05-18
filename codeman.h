@@ -79,11 +79,7 @@ struct RangeSection
 #endif
     };
 
-    union
-    {
-        DWORD               flags;
-	PTR_RangeSection pNextPendingDeletion;
-    };
+    DWORD               flags;
 
     // union
     // {
@@ -94,6 +90,7 @@ struct RangeSection
 #if defined(HOST_64BIT)
     PTR_UnwindInfoTable pUnwindInfoTable; // Points to unwind information for this memory range.
 #endif // defined(HOST_64BIT)
+    PTR_RangeSection pNextPendingDeletion;
 };
 
 
@@ -110,7 +107,7 @@ class ExecutionManager
 
     enum
     {
-#define _DEBUG
+//#define _DEBUG
 #ifndef _DEBUG
         RangeSectionHandleArrayInitialSize = 100,
         RangeSectionHandleArrayExpansionFactor = 2
@@ -118,7 +115,7 @@ class ExecutionManager
         RangeSectionHandleArrayInitialSize = 8,
 	RangeSectionHandleArrayIncrement = 1
 #endif //(_DEBUG)
-#undef _DEBUG
+//#undef _DEBUG
     };
 
     static int FindRangeSectionHandleHelper(RangeSectionHandleHeader *h, TADDR addr);
@@ -143,9 +140,17 @@ public:
     class ReaderLockHolder
     {
     public:
-        ReaderLockHolder();
+        ReaderLockHolder(bool allowHostCalls);
         ~ReaderLockHolder();
 	RangeSectionHandleHeader *h;
+	bool m_allowHostCalls;
+    };
+
+    class ForbidDeletionHolder
+    {
+    public:
+        ForbidDeletionHolder();
+        ~ForbidDeletionHolder();
     };
 
 
@@ -166,6 +171,11 @@ private:
 
     static CrstStatic       m_RangeCrst;        // Aquire before writing into m_CodeRangeList and m_DataRangeList
 
+    //positive values block a deleter from substitution rh <- wh
+    //deleter can store -1 if there is 0, signalling FDH constructor
+    //to wait a few cycles while deleter substitutes rh <- wh
+    static volatile LONG m_dwForbidDeletionCounter;
+
     //static Volatile<RangeSectionHandle *> m_RangeSectionHandleArray;
     //static Volatile<int> m_LastUsedRSIndex;
     //static Volatile<SIZE_T> m_RangeSectionArraySize;
@@ -179,9 +189,10 @@ private:
     class WriterLockHolder
     {
     public:
-        WriterLockHolder();
+        WriterLockHolder(int purpose = 0); //0 for add, 1 for delete
         ~WriterLockHolder();
         RangeSectionHandleHeader *h;
+	int m_purpose;
     };
 
 

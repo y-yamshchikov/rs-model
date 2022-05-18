@@ -484,6 +484,7 @@ void reader(ExecutionManager *EM, const LoadSettings &load_settings, const std::
 			int noise = 0;
 			TADDR pCode = (TADDR)((unsigned long long)ranges[k].LowAddress + random_delta + noise);
 
+			ExecutionManager::ForbidDeletionHolder();
 			RangeSection *pRS = EM->GetRangeSection(pCode);
 			if (!pRS) 
 			{
@@ -751,12 +752,12 @@ int load_multithreaded_rwd_async(bool set_seed, unsigned int seed)
 
 ///------------------load settings-----------------//
 	//load_settings.OrderDescending();
-	//load_settings.OrderAscending();
-	load_settings.OrderRandom();
+	load_settings.OrderAscending();
+	//load_settings.OrderRandom();
 	//load_settings.SetDeleteDensity(10);
 	load_settings.SetDeleteDensity(90);
-	//load_settings.SetReadLoadDensity(10000);
-	load_settings.SetReadLoadDensity(1);
+	load_settings.SetReadLoadDensity(10000);
+	//load_settings.SetReadLoadDensity(1);
 
 
 	if (set_seed)

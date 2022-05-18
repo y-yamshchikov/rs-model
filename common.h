@@ -9,6 +9,7 @@ typedef uintptr_t TADDR;
 #define TRUE 1
 #define FALSE 0
 typedef unsigned long DWORD;
+typedef int32_t LONG;
 
 typedef int IJitManager;
 

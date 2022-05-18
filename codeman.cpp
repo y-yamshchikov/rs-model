@@ -30,6 +30,7 @@ To dac_cast(From arg)
 volatile RangeSectionHandleHeader*  ExecutionManager::m_RangeSectionHandleReaderHeader = nullptr;
 volatile RangeSectionHandleHeader*  ExecutionManager::m_RangeSectionHandleWriterHeader = nullptr;
 volatile RangeSection*  ExecutionManager::m_RangeSectionPendingDeletion = nullptr;
+volatile LONG ExecutionManager::m_dwForbidDeletionCounter = 0; //CLR_TODO remove plain volatile and perform VolatileLoad/Store
 //Volatile<int> ExecutionManager::m_LastUsedRSIndex = -1;
 //Volatile<SIZE_T> ExecutionManager::m_RangeSectionArraySize = 0;
 //Volatile<SIZE_T> ExecutionManager::m_RangeSectionArrayCapacity = 0;
@@ -55,7 +56,34 @@ T InterlockedCompareExchangeT(T* ptr, T newval, T oldval)
 	return __sync_val_compare_and_swap(ptr, oldval, newval);
 }
 
-ExecutionManager::ReaderLockHolder::ReaderLockHolder()
+ExecutionManager::ForbidDeletionHolder::ForbidDeletionHolder()
+{
+    while(true)
+    {
+        LONG c = m_dwForbidDeletionCounter; //VolatileLoad
+        if (c >= 0)
+        {
+            if (c == InterlockedCompareExchangeT((LONG*)&m_dwForbidDeletionCounter, c+1, c))
+                break; //now we are blocking rh<-wh substitution performing by deleters
+                       //deleters are WriterLockHolder destructors for wlhs constructed
+                       //with deletion purpose (see WriterLockHolder constructor)
+        }
+    }
+}
+
+ExecutionManager::ForbidDeletionHolder::~ForbidDeletionHolder()
+{
+    LONG c;
+    do
+    {
+        c = m_dwForbidDeletionCounter; //VolatileLoad
+    } while (c != InterlockedCompareExchangeT((LONG*)&m_dwForbidDeletionCounter, c-1, c));
+    //once m_ForbidDeletionCounter appears to be 0 a deleter can store here -1
+    //just to perform rh<-wh substitution and instantly
+    //stores 0 back making FDH constructors wait just for a few cycles
+}
+
+ExecutionManager::ReaderLockHolder::ReaderLockHolder(bool allowHostCalls = true): m_allowHostCalls(allowHostCalls)
 {
     //IncCantAllocCount();
 
@@ -95,15 +123,18 @@ ExecutionManager::ReaderLockHolder::~ReaderLockHolder()
         //such code executes once per swap of arrays,
         //so we should not worry about enormous amount
         //of m_RangeSectionPendingDeletion accesses
-        while((RangeSection*)m_RangeSectionPendingDeletion != NULL)
+        if (m_allowHostCalls)
         {
-            RangeSection* pNext = ((RangeSection*)m_RangeSectionPendingDeletion)->pNextPendingDeletion;
+            while((RangeSection*)m_RangeSectionPendingDeletion != NULL)
+            {
+                RangeSection* pNext = ((RangeSection*)m_RangeSectionPendingDeletion)->pNextPendingDeletion;
 #if defined(TARGET_AMD64)
-            if (((RangeSection*)m_RangeSectionPendingDeletion)->pUnwindInfoTable != 0)
-                delete ((RangeSection*)m_RangeSectionPendingDeletion)->pUnwindInfoTable;
+                if (((RangeSection*)m_RangeSectionPendingDeletion)->pUnwindInfoTable != 0)
+                    delete ((RangeSection*)m_RangeSectionPendingDeletion)->pUnwindInfoTable;
 #endif // defined(TARGET_AMD64)
-            delete (RangeSection*)m_RangeSectionPendingDeletion;
-            m_RangeSectionPendingDeletion = pNext;
+                delete (RangeSection*)m_RangeSectionPendingDeletion;
+                m_RangeSectionPendingDeletion = pNext;
+            }
         }
 
         m_RangeSectionHandleWriterHeader = h;
@@ -151,7 +182,7 @@ BOOL __SwitchToThread (DWORD dwSleepMSec, DWORD dwSwitchCount)
 //it results in a deadlock when writer lock will wait for
 //old copy holding by the reader
 //which will never be returned on writer's spot
-ExecutionManager::WriterLockHolder::WriterLockHolder()
+ExecutionManager::WriterLockHolder::WriterLockHolder(int purpose): m_purpose(purpose)
 {
     // Signal to a debugger that this thread cannot stop now
     //IncCantStopCount();
@@ -180,13 +211,36 @@ ExecutionManager::WriterLockHolder::~WriterLockHolder()
     int count;
     RangeSectionHandleHeader *old_rh = (RangeSectionHandleHeader*)m_RangeSectionHandleReaderHeader;
     h->count = 1; //EM's unit
-    m_RangeSectionHandleReaderHeader = h;
+
+    if (m_purpose == 1)//deletion 
+    {
+        DWORD dwSwitchCount = 0;
+        LONG fdc;
+        while (true)	
+        {
+            fdc = m_dwForbidDeletionCounter;//VolatileLoad
+            if (fdc == 0)
+            {
+                if (0 == InterlockedCompareExchangeT((LONG*)&(m_dwForbidDeletionCounter), (LONG) -1, (LONG)0))
+                {
+                    m_RangeSectionHandleReaderHeader = h; //VolatileStore
+                    m_dwForbidDeletionCounter = 0; //VolatileStore 
+                    break;
+                }
+	    }
+            __SwitchToThread(0, ++dwSwitchCount);
+        }
+    }
+    else
+    {
+        m_RangeSectionHandleReaderHeader = h; //VolatileStore
+    }
 
     //removing EM's unit from old reader's header, so now latest leaving
     //user will attach the header to writer's slot
     do
     {
-        count = old_rh->count;
+        count = old_rh->count; //VolatileLoad
     }
     while (count != InterlockedCompareExchangeT((int*)&(old_rh->count), count-1, count));
 
@@ -204,7 +258,7 @@ ExecutionManager::WriterLockHolder::~WriterLockHolder()
             m_RangeSectionPendingDeletion = pNext;
         }
 
-        m_RangeSectionHandleWriterHeader = old_rh;
+        m_RangeSectionHandleWriterHeader = old_rh; //VolatileStore
     }
 
     // Writer lock released, so it's safe again for this thread to be
@@ -273,7 +327,7 @@ RangeSection* ExecutionManager::GetRangeSection(TADDR addr)
         return NULL;
     }
 
-    ReaderLockHolder rlh;
+    ReaderLockHolder rlh(false); //false here is for test, should be properly wired, TODO
     RangeSectionHandleHeader *rh = rlh.h;
 #ifndef DACCESS_COMPILE
     int LastUsedRSIndex = rh->last_used_index;
@@ -449,13 +503,13 @@ void ExecutionManager::AddRangeSection(RangeSection *pRS)
         delete[] wh->array;
 	if ((rh->size+1) > rh->capacity)
 	{
-#define _DEBUG
+//#define _DEBUG
 #ifdef _DEBUG
         	wh->capacity = rh->capacity + RangeSectionHandleArrayIncrement;
 #else
         	wh->capacity = rh->capacity * RangeSectionHandleArrayExpansionFactor;
 #endif //_DEBUG
-#undef _DEBUG
+//#undef _DEBUG
 	}
 	else
 	{
@@ -573,7 +627,7 @@ void ExecutionManager::DeleteRange(TADDR pStartRange)
         // This also forces us to enter a forbid suspend thread region, to prevent
         // hijacking profilers from grabbing this thread and walking it (the walk may
         // require the reader lock, which would cause a deadlock).
-        WriterLockHolder wlh;
+        WriterLockHolder wlh(1); //1 signals that purpose of the lock is deletion
         RangeSectionHandleHeader *rh = (RangeSectionHandleHeader*)m_RangeSectionHandleReaderHeader;
 	int index = FindRangeSectionHandleHelper(rh, pStartRange);
 
